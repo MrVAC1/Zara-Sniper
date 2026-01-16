@@ -781,36 +781,71 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
 
       try {
         // 1. Login check once per step
-        if (await isLoginPage(page)) throw new Error('Login Redirect during flow');
+        // Wrap checking in try-catch for destroyed context
+        try {
+          if (!page || page.isClosed()) throw new Error('Page closed');
+          if (await isLoginPage(page)) throw new Error('Login Redirect during flow');
+        } catch (e) {
+          if (e.message.includes('context was destroyed') || e.message.includes('Target closed')) {
+            logger.warn(`[Checkout] Context lost check. Waiting 1s...`);
+            await delay(1000);
+            if (page && !page.isClosed()) continue; // Restart loop iteration
+          }
+        }
 
         // 2. Wait for ANY of the "Continue" buttons to appear
         const btn = await page.waitForSelector(combinedContinue, {
           visible: true,
-          timeout: 2000 // Removed 5000ms wait for first step as requested
+          timeout: 2000
         }).catch(() => null);
 
         if (btn) {
-          await btn.click({ force: true });
-          logger.log(`[Checkout] Clicked Continue (Step ${i + 1})`);
-          clickedInTerm = true;
+          try {
+            await btn.click({ force: true });
 
-          // 3. Handle Out-of-Stock Modal (specifically on first step)
-          if (i === 0) {
-            const closeModalBtn = await page.waitForSelector('[data-qa-id="close-modal"]', { timeout: TIMEOUT_MODAL_CHECK }).catch(() => null);
-            if (closeModalBtn) {
-              logger.warn('[Checkout] Виявлено модальне вікно (продано). Закриваю та повторюю...');
-              await closeModalBtn.click({ force: true });
-              await delay(DELAY_FAST_BACKTRACK);
-              // Retry the click on the same page
-              const retryBtn = await page.$(combinedContinue);
-              if (retryBtn) await retryBtn.click({ force: true }).catch(() => { });
+            // FIX: Wait for navigation to stabilize!
+            await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => { });
+
+            logger.log(`[Checkout] Clicked Continue (Step ${i + 1})`);
+            clickedInTerm = true;
+
+            // 3. Handle Out-of-Stock Modal (specifically on first step)
+            if (i === 0) {
+              const closeModalBtn = await page.waitForSelector('[data-qa-id="close-modal"]', { timeout: TIMEOUT_MODAL_CHECK }).catch(() => null);
+              if (closeModalBtn) {
+                logger.warn('[Checkout] Виявлено модальне вікно (продано). Закриваю та повторюю...');
+                await closeModalBtn.click({ force: true });
+                await delay(DELAY_FAST_BACKTRACK);
+                // Retry the click on the same page
+                const retryBtn = await page.$(combinedContinue);
+                if (retryBtn) await retryBtn.click({ force: true }).catch(() => { });
+                // Wait again after interaction
+                await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => { });
+              }
+            }
+          } catch (clickError) {
+            if (clickError.message.includes('context was destroyed')) {
+              logger.warn(`[Checkout] Context destroyed during click (Step ${i + 1}). Waiting 1s...`);
+              await delay(1000);
+              // If clicked but context died, it usually means navigation happened. 
+              // We consider this 'clickedInTerm = true' effectively or let next loop handle it?
+              // Safer to process next loop iteration naturally.
+              clickedInTerm = true;
+            } else {
+              throw clickError;
             }
           }
 
           await delay(DELAY_CHECKOUT_STEP);
         }
       } catch (e) {
-        logger.warn(`[Checkout] Step ${i + 1} wait warning: ${e.message}`);
+        if (e.message.includes('context was destroyed')) {
+          logger.warn(`[Checkout] Global Step ${i + 1} Context Error. Retrying step via loop...`);
+          await delay(1000);
+          i--; // Retry this step index!
+          continue;
+        }
+        logger.warn(`[Checkout] Step ${i + 1} warning: ${e.message}`);
       }
 
       if (!clickedInTerm) {
