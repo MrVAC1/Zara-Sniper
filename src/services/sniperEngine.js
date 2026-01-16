@@ -793,6 +793,27 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
           }
         }
 
+        // 1.5 Special Check for Google Login Re-auth
+        const googleLoginBtn = await page.$('a[data-qa-id="logon-google"]');
+        if (googleLoginBtn) {
+          logger.warn('[Checkout] ⚠️ Google Login prompt detected!');
+
+          const loginPath = `screenshots/google-login-${taskId}-${Date.now()}.png`;
+          await page.screenshot({ path: loginPath, fullPage: true }).catch(() => { });
+
+          if (telegramBot && finalChatId) {
+            telegramBot.telegram.sendPhoto(finalChatId, { source: loginPath }, {
+              caption: '⚠️ <b>Google Login Detected!</b>\nБот намагається увійти автоматично...',
+              parse_mode: 'HTML'
+            }).catch(() => { });
+          }
+
+          await googleLoginBtn.click({ force: true });
+          logger.log('[Checkout] Clicked Google Login. Waiting for redirect...');
+          await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => { });
+          continue; // Restart loop to check for next buttons
+        }
+
         // 2. Wait for ANY of the "Continue" buttons to appear
         const btn = await page.waitForSelector(combinedContinue, {
           visible: true,
