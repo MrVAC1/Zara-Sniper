@@ -825,7 +825,7 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
             await btn.click({ force: true });
 
             // FIX: Wait for navigation to stabilize!
-            await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => { });
+            await page.waitForLoadState('domcontentloaded', { timeout: 2000 }).catch(() => { });
 
             logger.log(`[Checkout] Clicked Continue (Step ${i + 1})`);
             clickedInTerm = true;
@@ -841,7 +841,7 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
                 const retryBtn = await page.$(combinedContinue);
                 if (retryBtn) await retryBtn.click({ force: true }).catch(() => { });
                 // Wait again after interaction
-                await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => { });
+                await page.waitForLoadState('domcontentloaded', { timeout: 2000 }).catch(() => { });
               }
             }
           } catch (clickError) {
