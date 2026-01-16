@@ -1134,6 +1134,10 @@ async function sniperLoop(task, telegramBot, logger) {
   // If mismatch occurs, we set this to false until repaired
   let isSkuValidated = false;
 
+  // NEW: State for "Waiting for Catalog" (when color is missing in region)
+  let isWaitingForCatalog = false;
+  let lastCatalogSkuCount = 0;
+
   // Extract Product ID and Store ID
   let productId = task.productId; // Primary source: DB (from viewPayload)
 
@@ -1233,6 +1237,28 @@ async function sniperLoop(task, telegramBot, logger) {
             // 2. API Check
             // logger.log(`[API] Checking availability...`);
             const data = await checkAvailability(storeId, productId, task.skuId);
+
+            // --- WAITING FOR CATALOG LOGIC ---
+            if (isWaitingForCatalog) {
+              if (data && data.skusAvailability) {
+                const currentCount = data.skusAvailability.length;
+
+                // If catalog changed (count different or non-zero if it was zero)
+                // We optimistically try to re-scan
+                if (currentCount !== lastCatalogSkuCount && currentCount > 0) {
+                  logger.success(`[Catalog Monitor] 🔄 Catalog update detected (SKUs: ${currentCount}). Retrying Auto-Correction...`);
+                  isWaitingForCatalog = false;
+                  lastCatalogSkuCount = 0; // Reset
+                  // Fall through to normal repair logic below
+                } else {
+                  // Still waiting - skip repair, just sleep
+                  if (attempts % 20 === 0) logger.log(`[Catalog Monitor] 💤 Still waiting for color "${task.selectedColor.name}" to appear in catalog...`);
+                  await delay(API_MONITORING_INTERVAL * 2); // Slow down polling
+                  continue;
+                }
+              }
+            }
+            // --------------------------------
 
             if (data && data.skusAvailability) {
               // Loose equality check for safety (string vs number)
@@ -1336,7 +1362,22 @@ async function sniperLoop(task, telegramBot, logger) {
                       }
 
                     } else {
-                      logger.error(`[Auto-Correction] Failed to resolve SKU. Payload mismatch. Error: ${repairResult?.error || 'Unknown'}`);
+                      const errorMsg = repairResult?.error || 'Unknown';
+                      logger.error(`[Auto-Correction] Failed to resolve SKU. Payload mismatch. Error: ${errorMsg}`);
+
+                      // NEW: Check if error is "Color not found"
+                      if (errorMsg.includes('Color') && errorMsg.includes('not found')) {
+                        logger.warn(`[Catalog Monitor] 🔍 Color "${task.selectedColor.name}" missing in this region. Entering WAITING MODE.`);
+                        isWaitingForCatalog = true;
+                        if (data && data.skusAvailability) lastCatalogSkuCount = data.skusAvailability.length;
+
+                        if (telegramBot && task.userId) {
+                          telegramBot.telegram.sendMessage(task.userId, `🔍 <b>Статус: Очікування Каталогу</b>\nКолір "<b>${task.selectedColor.name}</b>" зараз відсутній у каталозі магазину.\nБот перейшов у режим моніторингу і спробує знову, коли каталог оновиться.`, { parse_mode: 'HTML' }).catch(() => { });
+                        }
+                        // Close page to save resources while waiting
+                        if (page) await page.close().catch(() => { });
+                        activePages.delete(task._id.toString());
+                      }
                     }
                   } catch (repairError) {
                     logger.error(`[Auto-Correction] Repair failed: ${repairError.message}`);
