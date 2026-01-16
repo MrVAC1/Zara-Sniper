@@ -8,6 +8,7 @@ user_data/
 playwright/.cache/
 
 ZARA_MANAGER.bat
+ZARA_MANAGER.command
 
 COST_ANALYSIS_UA.md
 zara_user_profile/
