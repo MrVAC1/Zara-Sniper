@@ -1,0 +1,13 @@
+node_modules/
+.env
+*.log
+.DS_Store
+screenshots/
+.session/
+user_data/
+playwright/.cache/
+
+ZARA_MANAGER.bat
+
+COST_ANALYSIS_UA.md
+zara_user_profile/
