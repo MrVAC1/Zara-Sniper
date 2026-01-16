@@ -630,18 +630,18 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
   const screenshots = [];
 
   // --- 30s CHECKOUT WATCHDOG --- (Protect against stuck process)
-  const CHECKOUT_HARD_TIMEOUT = 30000;
+  const CHECKOUT_HARD_TIMEOUT = 45000;
   let checkoutTimeout = null;
 
   if (telegramBot && finalChatId) {
     checkoutTimeout = setTimeout(async () => {
-      logger.error('[Checkout] ⏳ Timeout: Checkout took > 30s!');
+      logger.error('[Checkout] ⏳ Timeout: Checkout took > 45s!');
       const errorPath = `screenshots/timeout-${taskId}-${Date.now()}.png`;
       try {
         if (page && !page.isClosed()) await page.screenshot({ path: errorPath, fullPage: true });
         const botApi = telegramBot.telegram || telegramBot;
         await botApi.sendPhoto(finalChatId, { source: errorPath }, {
-          caption: '⏰ *Помилка тайм-ауту (30с)!*\nПроцес покупки затягнувся занадто довго.',
+          caption: '⏰ *Помилка тайм-ауту (45с)!*\nПроцес покупки затягнувся занадто довго.',
           parse_mode: 'Markdown'
         });
       } catch (e) { logger.error(`Timeout Handler Error: ${e.message}`); }
