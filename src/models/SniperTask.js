@@ -28,6 +28,9 @@ const sniperTaskSchema = new mongoose.Schema({
   targetColor: { // Added alias/explicit field as requested
     type: String
   },
+  targetColorRGB: { // Stored RGB style for strict verification
+    type: String
+  },
   selectedSize: {
     name: String,
     value: String

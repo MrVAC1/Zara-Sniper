@@ -138,6 +138,35 @@ export async function parseProductOptions(url) {
             isAvailable: sizes.some(s => s.available) // Color is available if any size is
           });
         });
+
+        // --- DOM STYLE EXTRACTION ---
+        // Match payload colors with DOM elements to get the exact RGB style
+        const domButtons = Array.from(document.querySelectorAll('button[data-qa-action="select-color"]'));
+        colors.forEach(color => {
+          // Normalize color name
+          const colorName = color.name.toLowerCase().trim();
+
+          const matchingBtn = domButtons.find(btn => {
+            const btnName = (btn.getAttribute('aria-label') || btn.innerText || '').toLowerCase().trim();
+            // Try match by name
+            if (btnName === colorName || btnName.includes(colorName)) return true;
+            // Try match by ID if available in dataset
+            if (btn.dataset.id && btn.dataset.id === color.value.toString()) return true;
+            return false;
+          });
+
+          if (matchingBtn) {
+            const styleDiv = matchingBtn.querySelector('div[style], span[style]');
+            if (styleDiv) {
+              const style = styleDiv.getAttribute('style');
+              // Extract background-color value
+              const bgMatch = style.match(/background-color:\s*([^;]+)/i);
+              if (bgMatch) {
+                color.styleRGB = bgMatch[1].trim(); // Save "rgb(36, 37, 36)"
+              }
+            }
+          }
+        });
       }
 
       // Якщо кольорів немає в detail.colors, можливо це simple product

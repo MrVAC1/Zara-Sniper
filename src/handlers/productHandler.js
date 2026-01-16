@@ -746,6 +746,7 @@ export async function handleSizeSelection(ctx, colorIndex, sizeIndex) {
         skuId: selectedSize.skuId // Ensure SKU is saved in selectedSize too
       },
       targetSize: selectedSize.name, // NEW Field
+      targetColorRGB: selectedColor.styleRGB, // Strictly enforce this color style
       skuId: skuId,
       status: isAvailable ? 'processing' : 'hunting', // Processing if available, Hunting if not
       attempts: 0,

@@ -181,6 +181,84 @@ export function getTaskPage(taskId) {
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
+ * Strict Color Verification
+ */
+export async function verifyAndSelectColor(page, targetColorRGB, logger) {
+  if (!targetColorRGB) return { success: true }; // Skip if no RGB target set (legacy support)
+
+  // 1. Normalize Target Color (HEX -> RGB & Remove Spaces)
+  function hexToRgb(hex) {
+    const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
+    hex = hex.replace(shorthandRegex, (m, r, g, b) => r + r + g + g + b + b);
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? `rgb(${parseInt(result[1], 16)},${parseInt(result[2], 16)},${parseInt(result[3], 16)})` : null;
+  }
+
+  let normalizedTarget = targetColorRGB.replace(/\s+/g, '').toLowerCase(); // "rgb(1,2,3)"
+  if (normalizedTarget.startsWith('#')) {
+    const converted = hexToRgb(normalizedTarget);
+    if (converted) normalizedTarget = converted.replace(/\s+/g, '');
+  }
+
+  // Ensure "rgb" prefix
+  if (!normalizedTarget.startsWith('rgb')) {
+    // Fallback or assume it is somehow valid, but likely hex conversion handled it
+  }
+
+  logger.log(`[Action] Пошук кольору. Очікуємо (normalized): ${normalizedTarget}`);
+
+  const result = await page.evaluate(async ({ targetRGB }) => {
+    const selectorTimeout = 5000;
+    const start = Date.now();
+    const clean = (str) => str ? str.replace(/\s+/g, '').toLowerCase() : '';
+
+    while (Date.now() - start < selectorTimeout) {
+      const buttons = Array.from(document.querySelectorAll('button[data-qa-action="select-color"]'));
+
+      for (const btn of buttons) {
+        // Try multiple child levels to find the colored element
+        const styleDiv = btn.querySelector('div[style], span[style], div[class*="main-color"]');
+
+        if (styleDiv) {
+          // Use Computed Style for accuracy (handles inheritance, hex/rgb rendering diffs)
+          const computed = window.getComputedStyle(styleDiv).backgroundColor; // Usually "rgb(r, g, b)"
+          const foundColor = clean(computed);
+
+          // Log for debugging (only if close match not found instantly to avoid spam, or finding logic)
+          // console.log(`[ColorCheck] Found: ${foundColor} | Target: ${targetRGB}`);
+
+          if (foundColor === targetRGB) {
+            // console.log here is invisible to Node
+            btn.click();
+            return {
+              success: true,
+              rgb: foundColor,
+              log: `[Action] Порівняння кольорів: Очікуємо ${targetRGB} | На сторінці ${foundColor} (MATCH)`
+            };
+          }
+        }
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    // If loop finishes without match, output what we found for debugging
+    const firstBtn = document.querySelector('button[data-qa-action="select-color"] div[style]');
+    const debugColor = firstBtn ? window.getComputedStyle(firstBtn).backgroundColor : 'N/A';
+
+    return {
+      success: false,
+      foundDebug: debugColor,
+      log: `[Action] Порівняння кольорів: Очікуємо ${targetRGB} | На сторінці (перший знайдений): ${clean(debugColor)} (NO MATCH)`
+    };
+  }, { targetRGB: normalizedTarget });
+
+  // Print the log returned from browser context
+  if (result.log) logger.log(result.log);
+
+  return result;
+}
+
+/**
  * Перевірка доступності SKU
  */
 export async function checkSkuAvailability(page, skuId, selectedColor, selectedSize, logger) {
@@ -622,7 +700,7 @@ export async function fastCheckout(page, user, logger) {
 /**
  * Proceed to Checkout Flow
  */
-export async function proceedToCheckout(page, telegramBot, taskId, userId, productName, selectedSize, selectedColor, logger) {
+export async function proceedToCheckout(page, telegramBot, taskId, userId, productName, selectedSize, selectedColor, logger, purchaseStartTime = 0) {
   // Determine main recipient
   const ownerIdEnv = process.env.OWNER_ID;
   const firstOwner = ownerIdEnv ? ownerIdEnv.split(',')[0].trim() : null;
@@ -1138,9 +1216,13 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
           }
 
           // Mark task as completed
+          // Calculate duration
+          const duration = purchaseStartTime ? ((Date.now() - purchaseStartTime) / 1000).toFixed(2) : 'N/A';
+          const durationMsg = purchaseStartTime ? `⏱ Час виконання: ${duration} сек` : '';
+
           await SniperTask.findByIdAndUpdate(taskId, { status: 'completed' });
-          logger.success('[Checkout] ✅ Task marked as COMPLETED. Awaiting bank confirmation.');
-          console.log(`[Success] Всі скріншоти надіслано, викуп ініційовано для завдання ${taskId}.`);
+          logger.success(`[Checkout] ✅ Task marked as COMPLETED. Awaiting bank confirmation. ${durationMsg}`);
+          console.log(`[Success] Всі скріншоти надіслано, викуп ініційовано для завдання ${taskId}. ${durationMsg}`);
 
           return;
         } else {
@@ -1472,6 +1554,7 @@ async function sniperLoop(task, telegramBot, logger) {
       // Removed old simple wait loop
 
       logger.log(`[Execution] ⚔️ API confirmed stock. Launching Browser Attack!`);
+      const purchaseStartTime = Date.now();
 
       try {
         if (!page || page.isClosed()) await initPage();
@@ -1482,6 +1565,26 @@ async function sniperLoop(task, telegramBot, logger) {
 
         await removeUIObstacles(page);
         await closeAlerts(page);
+
+        // 1.5 Strict Color Verification
+        const colorCheck = await verifyAndSelectColor(page, task.targetColorRGB, logger);
+        if (!colorCheck.success && task.targetColorRGB) { // Strict fail only if RGB was requested
+          logger.error(`❌ [Error] Колір не знайдено на сторінці (Expected: ${task.targetColorRGB}). Перевірка регіону або наявності.`);
+
+          // Stop the task as per requirement
+          await SniperTask.findByIdAndUpdate(task._id, { status: 'failed' });
+          // Close page
+          if (page) await page.close().catch(() => { });
+          activePages.delete(task._id.toString());
+
+          // Notify user? Maybe later. For now just stop.
+          break; // Exit loop
+        } else if (colorCheck.success && task.targetColorRGB) {
+          logger.success(`✅ [Success] Колір вибрано візуально: ${task.targetColorRGB}.`);
+
+          // Optional: Save status note to DB (as requested)
+          // But avoid heavy DB writes inside loop. We can update when marking as 'at_checkout' later.
+        }
 
         // 2. Perform DOM Check & Interaction (Color/Size)
         // Reuse existing logic
@@ -1534,7 +1637,7 @@ async function sniperLoop(task, telegramBot, logger) {
               }, CHECKOUT_MAX_LOCK_TIME);
 
               try {
-                await proceedToCheckout(page, telegramBot, task._id, task.userId, task.productName, task.selectedSize?.name, task.selectedColor?.name, logger);
+                await proceedToCheckout(page, telegramBot, task._id, task.userId, task.productName, task.selectedSize?.name, task.selectedColor?.name, logger, purchaseStartTime);
                 clearTimeout(lockWatchdog);
                 return; // Exit loop
               } catch (chkErr) {
