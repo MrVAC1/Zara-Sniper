@@ -63,7 +63,10 @@ export async function initBrowser() {
       globalContext = null;
     }
 
-    const userDataDir = path.join(process.cwd(), 'zara_user_profile');
+    // --- ISOLATION: User-Specific Profile ---
+    const ownerId = process.env.OWNER_ID ? process.env.OWNER_ID.split(',')[0].trim() : 'default';
+    const sanitizedOwner = ownerId.replace(/[^a-zA-Z0-9]/g, '');
+    const userDataDir = path.join(process.cwd(), `zara_user_profile_${sanitizedOwner}`);
 
     // Очищення Singleton Lock (для Windows/Chromium глюків)
     const lockFile = path.join(userDataDir, 'SingletonLock');
@@ -296,7 +299,9 @@ export async function startLoginSession() {
   await closeBrowser();
 
   try {
-    const userDataDir = path.join(process.cwd(), 'zara_user_profile');
+    const ownerId = process.env.OWNER_ID ? process.env.OWNER_ID.split(',')[0].trim() : 'default';
+    const sanitizedOwner = ownerId.replace(/[^a-zA-Z0-9]/g, '');
+    const userDataDir = path.join(process.cwd(), `zara_user_profile_${sanitizedOwner}`);
     console.log('\n🔑 [Login Mode] Запуск сесії для авторизації...');
     console.log('--------------------------------------------------');
     console.log('📝 ІНСТРУКЦІЯ:');

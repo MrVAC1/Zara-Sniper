@@ -1,4 +1,5 @@
 import SniperTask from '../models/SniperTask.js';
+import User from '../models/User.js';
 import { parseProductOptions } from './zaraParser.js';
 
 
@@ -17,6 +18,9 @@ class TaskQueue {
    * Логування з префіксом Task ID
    */
   createLogger(taskId) {
+    const ownerId = process.env.OWNER_ID ? process.env.OWNER_ID.split(',')[0].trim() : 'Unknown';
+    const prefix = `[Owner: ${ownerId}]`;
+
     const logger = {
       lastLogTime: Date.now(),
       _getDuration() {
@@ -25,10 +29,10 @@ class TaskQueue {
         this.lastLogTime = now;
         return `[+${duration.toFixed(2)}s]`;
       },
-      log: function (message) { console.log(`[Task ${taskId}] ${message} ${this._getDuration()}`); },
-      error: function (message) { console.error(`[Task ${taskId}] ❌ ${message} ${this._getDuration()}`); },
-      success: function (message) { console.log(`[Task ${taskId}] ✅ ${message} ${this._getDuration()}`); },
-      warn: function (message) { console.warn(`[Task ${taskId}] ⚠️ ${message} ${this._getDuration()}`); }
+      log: function (message) { console.log(`${prefix} [Task ${taskId}] ${message} ${this._getDuration()}`); },
+      error: function (message) { console.error(`${prefix} [Task ${taskId}] ❌ ${message} ${this._getDuration()}`); },
+      success: function (message) { console.log(`${prefix} [Task ${taskId}] ✅ ${message} ${this._getDuration()}`); },
+      warn: function (message) { console.warn(`${prefix} [Task ${taskId}] ⚠️ ${message} ${this._getDuration()}`); }
     };
     this.loggers.set(taskId.toString(), logger);
     return logger;
@@ -148,9 +152,20 @@ export async function initializeActiveTasks(context, telegramBot) {
   try {
     console.log('🔄 [Bootstrap] Starting Cold Start restoration...');
 
-    // 1. Пошук активних завдань
+    // 1. Пошук активних завдань для поточного власника
+    const ownerIds = process.env.OWNER_ID ? process.env.OWNER_ID.split(',').map(s => s.trim()) : [];
+    const users = await User.find({ telegramId: { $in: ownerIds } });
+    const userIds = users.map(u => u._id);
+
+    // Якщо користувачів не знайдено, нічого не відновлюємо (безпека)
+    if (userIds.length === 0) {
+      console.log('⚠️ [Bootstrap] No users found for current OWNER_ID configuration. Skipping restoration.');
+      return;
+    }
+
     const tasks = await SniperTask.find({
-      status: { $in: ['SEARCHING', 'HUNTING', 'PENDING', 'MONITORING', 'hunting', 'processing'] }
+      status: { $in: ['SEARCHING', 'HUNTING', 'PENDING', 'MONITORING', 'hunting', 'processing'] },
+      userId: { $in: userIds }
     });
 
     if (tasks.length === 0) {
