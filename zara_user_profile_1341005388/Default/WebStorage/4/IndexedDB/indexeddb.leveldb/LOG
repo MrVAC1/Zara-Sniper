@@ -1,2 +1,3 @@
-2026/01/21-18:56:53.692 2b74 Creating DB C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\WebStorage\4\IndexedDB\indexeddb.leveldb since it was missing.
-2026/01/21-18:56:53.701 2b74 Reusing MANIFEST C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\WebStorage\4\IndexedDB\indexeddb.leveldb/MANIFEST-000001
+2026/01/21-20:11:30.183 415c Reusing MANIFEST C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\WebStorage\4\IndexedDB\indexeddb.leveldb/MANIFEST-000001
+2026/01/21-20:11:30.184 415c Recovering log #3
+2026/01/21-20:11:30.185 415c Reusing old log C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\WebStorage\4\IndexedDB\indexeddb.leveldb/000003.log 

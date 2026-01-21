@@ -1,8 +1,37 @@
-2026/01/21-18:55:23.820 560 Reusing MANIFEST C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\Local Storage\leveldb/MANIFEST-000001
-2026/01/21-18:55:23.849 560 Recovering log #3
-2026/01/21-18:55:23.895 560 Level-0 table #3: started
-2026/01/21-18:55:23.914 560 Level-0 table #3: 173318 bytes OK
-2026/01/21-18:55:23.931 560 Delete type=0 #3
-2026/01/21-18:57:24.486 560 Level-0 table #6: started
-2026/01/21-18:57:24.499 560 Level-0 table #6: 193896 bytes OK
-2026/01/21-18:57:24.502 560 Delete type=0 #4
+2026/01/21-19:30:54.340 3f40 Reusing MANIFEST C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\Local Storage\leveldb/MANIFEST-000001
+2026/01/21-19:30:54.373 3f40 Recovering log #5
+2026/01/21-19:30:54.375 3f40 Level-0 table #8: started
+2026/01/21-19:30:54.396 3f40 Level-0 table #8: 187659 bytes OK
+2026/01/21-19:30:54.407 3f40 Delete type=0 #5
+2026/01/21-19:31:48.157 3f98 Level-0 table #11: started
+2026/01/21-19:31:48.167 3f98 Level-0 table #11: 172983 bytes OK
+2026/01/21-19:31:48.169 3f98 Delete type=0 #9
+2026/01/21-19:31:48.177 3f98 Compacting 4@0 + 0@1 files
+2026/01/21-19:31:48.192 3f98 Generated table #12@0: 36 keys, 182288 bytes
+2026/01/21-19:31:48.192 3f98 Compacted 4@0 + 0@1 files => 182288 bytes
+2026/01/21-19:31:48.193 3f98 compacted to: files[ 0 1 0 0 0 0 0 ]
+2026/01/21-19:31:48.194 3f98 Delete type=2 #3
+2026/01/21-19:31:48.194 3f98 Delete type=2 #6
+2026/01/21-19:31:48.194 3f98 Delete type=2 #8
+2026/01/21-19:31:48.194 3f98 Delete type=2 #11
+2026/01/21-19:31:49.977 3f98 Level-0 table #14: started
+2026/01/21-19:31:49.990 3f98 Level-0 table #14: 176380 bytes OK
+2026/01/21-19:31:49.993 3f98 Delete type=0 #10
+2026/01/21-19:33:29.465 3f40 Level-0 table #16: started
+2026/01/21-19:33:29.482 3f40 Level-0 table #16: 175719 bytes OK
+2026/01/21-19:33:29.484 3f40 Delete type=0 #13
+2026/01/21-19:42:55.308 3f98 Level-0 table #18: started
+2026/01/21-19:42:55.319 3f98 Level-0 table #18: 162381 bytes OK
+2026/01/21-19:42:55.321 3f98 Delete type=0 #15
+2026/01/21-20:00:55.302 3f98 Level-0 table #20: started
+2026/01/21-20:00:55.316 3f98 Level-0 table #20: 177147 bytes OK
+2026/01/21-20:00:55.319 3f98 Delete type=0 #17
+2026/01/21-20:00:55.320 3f98 Compacting 4@0 + 1@1 files
+2026/01/21-20:00:55.332 3f98 Generated table #21@0: 38 keys, 182730 bytes
+2026/01/21-20:00:55.332 3f98 Compacted 4@0 + 1@1 files => 182730 bytes
+2026/01/21-20:00:55.333 3f98 compacted to: files[ 0 1 0 0 0 0 0 ]
+2026/01/21-20:00:55.334 3f98 Delete type=2 #12
+2026/01/21-20:00:55.334 3f98 Delete type=2 #14
+2026/01/21-20:00:55.334 3f98 Delete type=2 #16
+2026/01/21-20:00:55.334 3f98 Delete type=2 #18
+2026/01/21-20:00:55.334 3f98 Delete type=2 #20

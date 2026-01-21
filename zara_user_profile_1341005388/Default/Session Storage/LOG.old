@@ -1,3 +1,11 @@
-2026/01/21-18:55:23.911 a14 Reusing MANIFEST C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\Session Storage/MANIFEST-000001
-2026/01/21-18:55:23.927 a14 Recovering log #3
-2026/01/21-18:55:23.930 a14 Reusing old log C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\Session Storage/000003.log 
+2026/01/21-19:30:54.327 3f98 Reusing MANIFEST C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\Session Storage/MANIFEST-000001
+2026/01/21-19:30:54.353 3f98 Recovering log #3
+2026/01/21-19:30:54.353 3f98 Level-0 table #3: started
+2026/01/21-19:30:54.364 3f98 Level-0 table #3: 23007 bytes OK
+2026/01/21-19:30:54.365 3f98 Recovering log #4
+2026/01/21-19:30:54.369 3f98 Reusing old log C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\Session Storage/000004.log 
+2026/01/21-19:30:54.372 3f98 Delete type=0 #3
+2026/01/21-19:30:54.372 3f98 Delete type=2 #5
+2026/01/21-19:42:45.266 3f98 Level-0 table #6: started
+2026/01/21-19:42:45.276 3f98 Level-0 table #6: 23929 bytes OK
+2026/01/21-19:42:45.278 3f98 Delete type=0 #4

@@ -1,13 +1,14 @@
-2026/01/21-18:57:45.041 4090 Reusing MANIFEST C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\IndexedDB\https_www.zara.com_0.indexeddb.leveldb/MANIFEST-000001
-2026/01/21-18:57:45.042 4090 Recovering log #22
-2026/01/21-18:57:45.042 4090 Reusing old log C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\IndexedDB\https_www.zara.com_0.indexeddb.leveldb/000022.log 
-2026/01/21-18:57:45.137 2df0 Level-0 table #27: started
-2026/01/21-18:57:45.164 2df0 Level-0 table #27: 2296 bytes OK
-2026/01/21-18:57:45.180 2df0 Delete type=0 #22
-2026/01/21-18:57:45.182 4090 Manual compaction at level-0 from '\x00\x08\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x09\x00\x00\x00' @ 0 : 0; will stop at '\x00\x08\x01\x03\x03\x00\x00\x00\x00\x00\x00\xf0?' @ 633 : 1
-2026/01/21-18:57:45.183 4090 Compacting 1@0 + 1@1 files
-2026/01/21-18:57:45.206 4090 Generated table #28@0: 51 keys, 1230 bytes
-2026/01/21-18:57:45.206 4090 Compacted 1@0 + 1@1 files => 1230 bytes
-2026/01/21-18:57:45.207 4090 compacted to: files[ 0 1 1 0 0 0 0 ]
-2026/01/21-18:57:45.208 4090 Delete type=2 #27
-2026/01/21-18:57:45.209 4090 Manual compaction at level-0 from '\x00\x08\x01\x03\x03\x00\x00\x00\x00\x00\x00\xf0?' @ 633 : 1 .. '\x00\x09\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/01/21-20:21:02.455 415c Reusing MANIFEST C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\IndexedDB\https_www.zara.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/01/21-20:21:02.456 415c Recovering log #141
+2026/01/21-20:21:02.456 415c Reusing old log C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\IndexedDB\https_www.zara.com_0.indexeddb.leveldb/000141.log 
+2026/01/21-20:21:02.456 415c Delete type=2 #139
+2026/01/21-20:21:02.514 41a8 Level-0 table #146: started
+2026/01/21-20:21:02.531 41a8 Level-0 table #146: 1376 bytes OK
+2026/01/21-20:21:02.532 41a8 Delete type=0 #141
+2026/01/21-20:21:02.534 415c Manual compaction at level-0 from '\x00*\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00+\x00\x00\x00' @ 0 : 0; will stop at '\x00*\x01\x03\x03\x00\x00\x00\x00\x00\x00\xf0?' @ 3693 : 1
+2026/01/21-20:21:02.535 415c Compacting 1@0 + 1@1 files
+2026/01/21-20:21:02.551 415c Generated table #147@0: 104 keys, 2290 bytes
+2026/01/21-20:21:02.551 415c Compacted 1@0 + 1@1 files => 2290 bytes
+2026/01/21-20:21:02.552 415c compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/01/21-20:21:02.552 415c Delete type=2 #146
+2026/01/21-20:21:02.553 415c Manual compaction at level-0 from '\x00*\x01\x03\x03\x00\x00\x00\x00\x00\x00\xf0?' @ 3693 : 1 .. '\x00+\x00\x00\x00' @ 0 : 0; will stop at (end)
