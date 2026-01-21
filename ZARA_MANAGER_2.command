@@ -24,6 +24,26 @@ owner_id="1341005388"
 debug="true"
 headless="false"
 
+# Спроба завантажити існуючі налаштування з .env
+if [ -f "$BOT_DIR/.env" ]; then
+    # Helper to extract value safely
+    get_env_val() {
+        grep "^$1=" "$BOT_DIR/.env" | cut -d '=' -f2- | tr -d '\r'
+    }
+    
+    val_token=$(get_env_val "BOT_TOKEN")
+    val_cvv=$(get_env_val "CARD_CVV")
+    val_owner=$(get_env_val "OWNER_ID")
+    val_debug=$(get_env_val "DEBUG_API")
+    val_headless=$(get_env_val "HEADLESS")
+
+    [ ! -z "$val_token" ] && token="$val_token"
+    [ ! -z "$val_cvv" ] && cvv="$val_cvv"
+    [ ! -z "$val_owner" ] && owner_id="$val_owner"
+    [ ! -z "$val_debug" ] && debug="$val_debug"
+    [ ! -z "$val_headless" ] && headless="$val_headless"
+fi
+
 # Функція показу меню
 show_menu() {
     clear
