@@ -191,21 +191,19 @@ export async function verifyAndSelectColor(page, targetColorRGB, logger) {
     const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
     hex = hex.replace(shorthandRegex, (m, r, g, b) => r + r + g + g + b + b);
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return result ? `rgb(${parseInt(result[1], 16)},${parseInt(result[2], 16)},${parseInt(result[3], 16)})` : null;
+    return result ? `rgb(${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)})` : null;
   }
 
-  let normalizedTarget = targetColorRGB.replace(/\s+/g, '').toLowerCase(); // "rgb(1,2,3)"
-  if (normalizedTarget.startsWith('#')) {
-    const converted = hexToRgb(normalizedTarget);
-    if (converted) normalizedTarget = converted.replace(/\s+/g, '');
+  // Normalize: "rgb(1, 2, 3)" -> "rgb(1,2,3)" (remove all spaces, lowercase)
+  const normalize = (str) => str ? str.replace(/\s+/g, '').toLowerCase() : '';
+
+  let layoutTarget = normalize(targetColorRGB);
+  if (layoutTarget.startsWith('#')) {
+    const rgb = hexToRgb(layoutTarget);
+    if (rgb) layoutTarget = normalize(rgb);
   }
 
-  // Ensure "rgb" prefix
-  if (!normalizedTarget.startsWith('rgb')) {
-    // Fallback or assume it is somehow valid, but likely hex conversion handled it
-  }
-
-  logger.log(`[Action] Пошук кольору. Очікуємо (normalized): ${normalizedTarget}`);
+  logger.log(`[Action] Пошук кольору. Очікуємо (normalized): ${layoutTarget}`);
 
   const result = await page.evaluate(async ({ targetRGB }) => {
     const selectorTimeout = 5000;
@@ -250,7 +248,7 @@ export async function verifyAndSelectColor(page, targetColorRGB, logger) {
       foundDebug: debugColor,
       log: `[Action] Порівняння кольорів: Очікуємо ${targetRGB} | На сторінці (перший знайдений): ${clean(debugColor)} (NO MATCH)`
     };
-  }, { targetRGB: normalizedTarget });
+  }, { targetRGB: layoutTarget });
 
   // Print the log returned from browser context
   if (result.log) logger.log(result.log);
@@ -1411,6 +1409,9 @@ async function sniperLoop(task, telegramBot, logger) {
                   detectedAvailability = targetSku.availability; // Capture status for priority
                   apiFound = true;
                   break; // EXIT API LOOP -> GO TO BROWSER
+                } else if (targetSku.availability === 'back_soon') {
+                  // Optional: Handling "Coming Soon" or just wait
+                  // logger.log(`[API] Status: Back Soon.`);
                 }
               } else {
                 // Sad Path: SKU NOT FOUND in 200 OK response
@@ -1559,31 +1560,42 @@ async function sniperLoop(task, telegramBot, logger) {
       try {
         if (!page || page.isClosed()) await initPage();
 
-        // 1. Navigate to Product Page
+        // 1. Navigate to Product Page with Retry Logic
         await injectRegionalCookies(browserContext, task.url); // Ensure cookies
-        await page.goto(task.url, { waitUntil: 'domcontentloaded', timeout: GOTO_TIMEOUT });
 
-        await removeUIObstacles(page);
-        await closeAlerts(page);
+        let colorCheck = { success: false };
+        const MAX_RETRIES = 10;
+        const PAUSE_BETWEEN_RETRIES = 10000;
 
-        // 1.5 Strict Color Verification
-        const colorCheck = await verifyAndSelectColor(page, task.targetColorRGB, logger);
-        if (!colorCheck.success && task.targetColorRGB) { // Strict fail only if RGB was requested
-          logger.error(`❌ [Error] Колір не знайдено на сторінці (Expected: ${task.targetColorRGB}). Перевірка регіону або наявності.`);
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+          await page.goto(task.url, { waitUntil: 'domcontentloaded', timeout: GOTO_TIMEOUT });
 
-          // Stop the task as per requirement
+          await removeUIObstacles(page);
+          await closeAlerts(page);
+
+          // 1.5 Strict Color Verification
+          colorCheck = await verifyAndSelectColor(page, task.targetColorRGB, logger);
+
+          if (colorCheck.success || !task.targetColorRGB) {
+            break; // DETECTED! Exit retry loop and proceed
+          }
+
+          if (attempt < MAX_RETRIES) {
+            logger.warn(`[Wait] Кнопку кольору не знайдено. Очікування оновлення UI (Спроба ${attempt}/${MAX_RETRIES})...`);
+            await delay(PAUSE_BETWEEN_RETRIES);
+          }
+        } // End of Retry Loop
+
+        if (!colorCheck.success && task.targetColorRGB) {
+          logger.error(`❌ [Error] Колір не знайдено на сторінці після ${MAX_RETRIES} спроб (Expected: ${task.targetColorRGB}).`);
+
           await SniperTask.findByIdAndUpdate(task._id, { status: 'failed' });
-          // Close page
           if (page) await page.close().catch(() => { });
           activePages.delete(task._id.toString());
+          break; // Exit Sniper Loop (Task Failed)
 
-          // Notify user? Maybe later. For now just stop.
-          break; // Exit loop
         } else if (colorCheck.success && task.targetColorRGB) {
           logger.success(`✅ [Success] Колір вибрано візуально: ${task.targetColorRGB}.`);
-
-          // Optional: Save status note to DB (as requested)
-          // But avoid heavy DB writes inside loop. We can update when marking as 'at_checkout' later.
         }
 
         // 2. Perform DOM Check & Interaction (Color/Size)

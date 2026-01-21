@@ -9,7 +9,8 @@ playwright/.cache/
 
 ZARA_MANAGER.bat
 ZARA_MANAGER.command
-zara_user_profile_1341005388
+zara_user_profile_*
+.pid_*
 
 COST_ANALYSIS_UA.md
 zara_user_profile/
