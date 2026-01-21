@@ -420,18 +420,26 @@ export async function handleDelete(ctx, taskId) {
     return handleDeleteMenu(ctx);
   }
 
-  // Зупиняємо та закриваємо відповідну вкладку
+  const userId = ctx.from.id;
+  const user = await User.findOne({ telegramId: userId });
+
+  if (!user) {
+    return ctx.reply('❌ Користувача не знайдено');
+  }
+
+  // Зупиняємо та закриваємо відповідну вкладку (якщо є)
   await stopAndCloseTask(taskId);
 
-  const task = await SniperTask.findByIdAndDelete(taskId);
+  // STRICT OWNERSHIP CHECK + DELETE
+  const task = await SniperTask.findOneAndDelete({ _id: taskId, userId: user._id });
 
   const text = task
-    ? `🗑 Завдання *${task.productName}* (${task.selectedSize?.name}) видалено, вкладку закрито.`
-    : '❌ Завдання не знайдено (можливо вже видалено)';
+    ? `🗑 Завдання *${task.productName}* (${task.selectedSize?.name}) видалено.`
+    : '❌ Завдання не знайдено або ви не є власником.';
 
   try {
     if (ctx.callbackQuery) {
-      await ctx.answerCbQuery('Видалено');
+      await ctx.answerCbQuery('Виконано');
       await ctx.editMessageText(text, { parse_mode: 'Markdown' });
     } else {
       await ctx.reply(text, { parse_mode: 'Markdown' });
@@ -472,17 +480,35 @@ export async function handleDeleteAll(ctx) {
  * Команда /stop
  */
 export async function handleStop(ctx) {
-  console.log(`[Bot] Отримано команду /stop від ${ctx.from.id}`);
-  await ctx.reply('🛑 Зупинка бота та закриття браузера...');
+  const userId = ctx.from.id;
+  console.log(`[Bot] Отримано команду /stop від ${userId}`);
 
-  try {
-    const { closeBrowser } = await import('../services/browser.js');
-    await closeBrowser();
-  } catch (e) {
-    console.error('Помилка при закритті браузера:', e);
+  const user = await User.findOne({ telegramId: userId });
+  if (!user) return ctx.reply('❌ Користувача не знайдено');
+
+  // SOFT STOP: Find all active tasks for THIS USER and mark stopped
+  const tasks = await SniperTask.find({
+    userId: user._id,
+    status: { $in: ['hunting', 'processing', 'paused', 'monitoring'] }
+  });
+
+  if (tasks.length === 0) {
+    return ctx.reply('📭 У вас немає активних завдань для зупинки.');
   }
 
-  process.exit(0);
+  let count = 0;
+  for (const task of tasks) {
+    try {
+      await stopAndCloseTask(task._id);
+      task.status = 'stopped';
+      await task.save();
+      count++;
+    } catch (e) {
+      console.error(`Error stopping task ${task._id}: ${e.message}`);
+    }
+  }
+
+  await ctx.reply(`🛑 Успішно зупинено ${count} завдань. Бот продовжує працювати.\nДля повного вимкнення процесу використовуйте менеджер на ПК.`);
 }
 
 /**

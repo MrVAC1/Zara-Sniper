@@ -1,4 +1,6 @@
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
 import { Telegraf } from 'telegraf';
 import { connectDatabase } from './config/database.js';
 import { initBrowser, closeBrowser, getBrowser, startLoginSession, startAutoCleanup } from './services/browser.js';
@@ -21,6 +23,19 @@ import { getTimeConfig } from './utils/timeUtils.js';
 const { GOTO_TIMEOUT } = getTimeConfig();
 
 dotenv.config();
+
+// --- GLOBAL LOGGING PREFIX ---
+const ownerLogId = process.env.OWNER_ID ? process.env.OWNER_ID.split(',')[0].trim() : 'System';
+const logPrefix = `[Owner: ${ownerLogId}]`;
+
+const originalLog = console.log;
+const originalWarn = console.warn;
+const originalError = console.error;
+
+console.log = (...args) => originalLog(logPrefix, ...args);
+console.warn = (...args) => originalWarn(logPrefix, ...args);
+console.error = (...args) => originalError(logPrefix, ...args);
+// -----------------------------
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const OWNER_ID_RAW = process.env.OWNER_ID;
@@ -161,6 +176,21 @@ bot.catch((err, ctx) => {
 async function main() {
   try {
     console.log('🚀 Запуск Zara Sniper Bot...');
+
+    // --- PID FILE CREATION ---
+    const ownerIdFull = process.env.OWNER_ID || 'default';
+    const primaryOwner = ownerIdFull.split(',')[0].trim();
+    const sanitizedPidOwner = primaryOwner.replace(/[^a-zA-Z0-9]/g, '');
+    const pidFileName = `.pid_${sanitizedPidOwner}`;
+    const pidFilePath = path.join(process.cwd(), pidFileName);
+
+    try {
+      fs.writeFileSync(pidFilePath, process.pid.toString());
+      console.log(`[System] PID File created: ${pidFileName} (PID: ${process.pid})`);
+    } catch (pidErr) {
+      console.error(`[System] Failed to create PID file: ${pidErr.message}`);
+    }
+    // -------------------------
 
     // Підключення до БД
     await connectDatabase();
@@ -307,6 +337,24 @@ async function shutdown(signal) {
   try {
     await bot.stop(signal);
     await closeBrowser();
+
+    // --- PID CLEANUP ---
+    const ownerIdFull = process.env.OWNER_ID || 'default';
+    const primaryOwner = ownerIdFull.split(',')[0].trim();
+    const sanitizedPidOwner = primaryOwner.replace(/[^a-zA-Z0-9]/g, '');
+    const pidFileName = `.pid_${sanitizedPidOwner}`;
+    const pidFilePath = path.join(process.cwd(), pidFileName);
+
+    if (fs.existsSync(pidFilePath)) {
+      try {
+        fs.unlinkSync(pidFilePath);
+        console.log(`[System] PID File removed: ${pidFileName}`);
+      } catch (e) {
+        console.warn(`[System] Failed to remove PID file: ${e.message}`);
+      }
+    }
+    // -------------------
+
     await import('./config/database.js').then(m => m.disconnectDatabase());
     console.log('✅ Завершено коректно');
     process.exit(0);
