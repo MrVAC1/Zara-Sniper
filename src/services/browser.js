@@ -176,19 +176,9 @@ export async function initBrowser(userDataDir) {
     // Apply Stealth Scripts
     await applyStealthScripts(globalContext);
 
-    // --- GHOST PAGE CLEANER ---
-    globalContext.on('page', async (page) => {
-      try {
-        await new Promise(r => setTimeout(r, 3000));
-        if (page.isClosed()) return;
-
-        const url = page.url();
-        if (url === 'about:blank' || url === 'data:,') {
-          console.log('[Cleaner] Closed empty tab (about:blank) to save resources.');
-          await page.close().catch(() => { });
-        }
-      } catch (e) { }
-    });
+    // --- GHOST PAGE CLEANER REMOVED ---
+    // It was causing 'Target closed' errors by closing task pages before they could navigate.
+    // We rely on startAutoCleanup (periodic) instead.
     // ---------------------------
 
     globalContext.on('close', () => {

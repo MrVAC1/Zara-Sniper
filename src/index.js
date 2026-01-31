@@ -237,8 +237,8 @@ async function main() {
     const context = await initBrowser(userDataDir);
 
     // FIX: Darwin 20 Stability Pause
-    console.log('⏳ Waiting 30s for browser stabilization (Legacy macOS fix)...');
-    await new Promise(resolve => setTimeout(resolve, 30000));
+    console.log('⏳ Waiting 10s for browser stabilization (Legacy macOS fix)...');
+    await new Promise(resolve => setTimeout(resolve, 10000));
 
     // Start Auto-Cleanup (Delayed 5 min to prevent crash on startup)
     setTimeout(() => {
