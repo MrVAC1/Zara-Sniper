@@ -240,10 +240,10 @@ async function main() {
     console.log('⏳ Waiting 30s for browser stabilization (Legacy macOS fix)...');
     await new Promise(resolve => setTimeout(resolve, 30000));
 
-    // Start Auto-Cleanup (Delayed 2 min to prevent crash on startup)
+    // Start Auto-Cleanup (Delayed 5 min to prevent crash on startup)
     setTimeout(() => {
       startAutoCleanup(context, activePages);
-    }, 120000);
+    }, 300000);
 
     // Check for active tasks to optimize startup
     const activeTasksCount = await SniperTask.countDocuments({

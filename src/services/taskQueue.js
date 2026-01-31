@@ -229,8 +229,8 @@ export async function initializeActiveTasks(context, telegramBot) {
           console.error(`❌ [Bootstrap] Failed to start sniper for ${task._id}:`, err);
         });
 
-        // THROTTLE: Wait 2s before restoring next task (Legacy macOS crash fix)
-        await new Promise(r => setTimeout(r, 2000));
+        // THROTTLE: Wait 3s before restoring next task (Legacy macOS crash fix)
+        await new Promise(r => setTimeout(r, 3000));
 
       } catch (error) {
         console.error(`❌ [Bootstrap] Failed to restore task ${task._id}: ${error.message}`);
