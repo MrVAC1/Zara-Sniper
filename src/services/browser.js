@@ -1,5 +1,7 @@
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { FingerprintGenerator } from 'fingerprint-generator';
+import { FingerprintInjector } from 'fingerprint-injector';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
@@ -26,9 +28,9 @@ export const USER_AGENT = IS_MAC
   : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 const LAUNCH_ARGS = [
-  '--no-sandbox',
-  '--disable-setuid-sandbox',
-  '--disable-blink-features=AutomationControlled',
+  // '--no-sandbox', // Removed to reduce noise/detection
+  // '--disable-setuid-sandbox', // Removed
+  '--disable-blink-features=AutomationControlled', // Hide automation
   '--disable-infobars',
   '--start-maximized',
   '--disable-web-security',
@@ -139,27 +141,32 @@ export async function initBrowser(userDataDir) {
     // Handle Singleton Lock (Windows/Chromium glitches)
     const lockFile = path.join(userDataDir, 'SingletonLock');
     if (fs.existsSync(lockFile)) {
-      try {
-        // Wait a bit
-        await new Promise(r => setTimeout(r, 1000));
-        if (fs.existsSync(lockFile)) {
-          fs.unlinkSync(lockFile);
-          console.log('🧹 SingletonLock removed forcibly.');
-        }
-      } catch (e) {
-        console.warn('⚠️ Could not remove SingletonLock:', e.message);
-      }
+      try { fs.unlinkSync(lockFile); } catch (e) { }
     }
+
+    // --- FINGERPRINT GENERATION ---
+    console.log('[Init] Generating modern browser fingerprint...');
+    const fingerprintGenerator = new FingerprintGenerator();
+    const fingerprint = fingerprintGenerator.getFingerprint({
+      browsers: ['chrome'],
+      operatingSystems: ['macos'], // Always use macOS for consistency with user request (or 'windows' if preferred)
+      devices: ['desktop'],
+      minBrowserVersion: 128
+    });
+
+    const { width, height } = fingerprint.screen;
+    console.log(`[Init] Fingerprint generated: Chrome on macOS, Screen: ${width}x${height}`);
+    // ------------------------------
 
     console.log(`[Init] Launching Browser (Chromium Bundled)...`);
     console.log(`[Profile] ${userDataDir}`);
 
     globalContext = await chromium.launchPersistentContext(userDataDir, {
       headless: process.env.HEADLESS === 'true',
-      viewport: null,
+      viewport: { width, height }, // SYNC VIEWPORT
       ignoreDefaultArgs: ['--enable-automation'],
       args: LAUNCH_ARGS,
-      userAgent: USER_AGENT,
+      userAgent: fingerprint.navigator.userAgent, // Sync UA
       locale: 'uk-UA',
       timezoneId: 'Europe/Kyiv',
       // Strict isolation: Do not use system Chrome
@@ -175,11 +182,17 @@ export async function initBrowser(userDataDir) {
     global.sharedContext = globalContext;
     // -------------------------------
 
+    // --- FINGERPRINT INJECTION ---
+    const fingerprintInjector = new FingerprintInjector();
+    await fingerprintInjector.attachFingerprintToPlaywright(globalContext, fingerprint);
+    console.log('[Init] Fingerprint injected successfully.');
+    // -----------------------------
+
     // Default Timeouts
     globalContext.setDefaultTimeout(30000);
     globalContext.setDefaultNavigationTimeout(60000);
 
-    console.log(`[Stealth] Using native device characteristics (Fingerprint injection disabled)`);
+    console.log(`[Stealth] Using native device characteristics (Fingerprint injection disabled)`); // Legacy log, keeping for continuity but we DID inject
 
     // Apply Stealth Scripts
     await applyStealthScripts(globalContext);
