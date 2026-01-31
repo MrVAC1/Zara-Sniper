@@ -236,6 +236,10 @@ async function main() {
     console.log('🔄 Ініціалізація браузера...');
     const context = await initBrowser(userDataDir);
 
+    // FIX: Darwin 20 Stability Pause
+    console.log('⏳ Waiting 5s for browser stabilization (Legacy macOS fix)...');
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
     // Start Auto-Cleanup
     startAutoCleanup(context, activePages);
 

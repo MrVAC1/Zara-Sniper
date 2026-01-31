@@ -86,6 +86,8 @@ function validateEnvironment() {
   }
 }
 
+let lastUserDataDir = null;
+
 /**
  * Initialize Browser with Persistent Context (Singleton)
  * @param {string} userDataDir - Path to the user data directory (REQUIRED)
@@ -94,8 +96,16 @@ export async function initBrowser(userDataDir) {
   // Validate Environment first
   validateEnvironment();
 
+  // FIX: Support re-init using last known path
+  if (!userDataDir && lastUserDataDir) {
+    console.log(`[Init] Resuming with last known profile: ${lastUserDataDir}`);
+    userDataDir = lastUserDataDir;
+  } else if (userDataDir) {
+    lastUserDataDir = userDataDir;
+  }
+
   if (!userDataDir) {
-    throw new Error('initBrowser requires userDataDir argument');
+    throw new Error('initBrowser requires userDataDir argument (or previous init)');
   }
 
   // If context exists and healthy, return it
@@ -226,8 +236,18 @@ export async function getBrowser() {
   if (globalContext && isContextHealthy()) {
     return globalContext;
   }
-  // If we don't have a context, we can't auto-init without the path.
-  // The app architecture should ensure initBrowser is called first in main().
+
+  // FIX: Wait a bit if browser is initializing or just slightly delayed
+  // Try 6 times x 500ms = 3 seconds
+  console.log('[getBrowser] Context missing. Waiting for initialization...');
+  for (let i = 0; i < 6; i++) {
+    if (globalContext && isContextHealthy()) {
+      return globalContext;
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  // If we don't have a context after waiting
   console.warn('⚠️ getBrowser called but context is missing. Returning null.');
   return null;
 }
