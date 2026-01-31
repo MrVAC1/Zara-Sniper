@@ -1,4 +1,4 @@
-import { getBrowser, createTaskPage, removeUIObstacles, closeAlerts, takeScreenshot, injectRegionalCookies } from './browser.js';
+import { getBrowser, initBrowser, createTaskPage, removeUIObstacles, closeAlerts, takeScreenshot, injectRegionalCookies } from './browser.js';
 import SniperTask from '../models/SniperTask.js';
 import User from '../models/User.js';
 import { checkAuthSession, handleCaptcha } from './errorHandler.js';
@@ -1255,8 +1255,22 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
  * Основна логіка полювання (Hybrid Mode)
  */
 async function sniperLoop(task, telegramBot, logger) {
-  const browserContext = await getBrowser();
-  if (!browserContext) throw new Error('Браузер не ініціалізовано');
+  let browserContext = await getBrowser();
+
+  // FIX: Auto-Recovery for Lost Browser
+  if (!browserContext) {
+    logger.warn('[Sniper] Browser context missing. Attempting auto-recovery...');
+    try {
+      // Re-init without args relies on lastUserDataDir in browser.js
+      browserContext = await initBrowser();
+    } catch (e) {
+      logger.error(`[Sniper] Recovery failed: ${e.message}`);
+    }
+    // Double check
+    browserContext = await getBrowser();
+  }
+
+  if (!browserContext) throw new Error('Браузер не ініціалізовано (Recovery failed)');
 
   // Start of Sniper Loop
   let page = activePages.get(task._id.toString());

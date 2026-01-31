@@ -20,7 +20,7 @@ BOT_DIR="$(dirname "$0")/Zara-Sniper"
 # Тимчасові значення
 token="ВВЕДІТЬ_ТОКЕН"
 cvv="000"
-owner_id="1341005388"
+owner_id="ТЕЛЕГРАМ_АЙДІ"
 debug="true"
 headless="false"
 
