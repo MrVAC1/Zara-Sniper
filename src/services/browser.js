@@ -167,6 +167,14 @@ export async function initBrowser(userDataDir) {
       executablePath: undefined
     });
 
+    // --- DEBUG: Context Tracking ---
+    globalContext._debugId = Math.random().toString(36).substring(7);
+    console.log(`[Debug] globalContext assigned at ${new Date().toISOString()} (ID: ${globalContext._debugId})`);
+
+    // Fallback/Debug Global Reference
+    global.sharedContext = globalContext;
+    // -------------------------------
+
     // Default Timeouts
     globalContext.setDefaultTimeout(30000);
     globalContext.setDefaultNavigationTimeout(60000);
@@ -182,12 +190,13 @@ export async function initBrowser(userDataDir) {
     // ---------------------------
 
     globalContext.on('close', () => {
-      console.log('⚠️ Browser context closed!');
+      console.log(`🛑 [DEBUG] Browser Context CLOSED (ID: ${globalContext?._debugId || 'unknown'}) at ${new Date().toISOString()}`);
     });
 
     if (globalContext.browser()) {
-      globalContext.browser().on('disconnected', () => {
-        console.log('⚠️ Browser disconnected! Exiting...');
+      const browser = globalContext.browser();
+      browser.on('disconnected', () => {
+        console.log(`🛑 [DEBUG] Browser DISCONNECTED from system at ${new Date().toISOString()}`);
         process.exit(0);
       });
     }
@@ -196,6 +205,7 @@ export async function initBrowser(userDataDir) {
     return globalContext;
   } catch (error) {
     console.error('❌ Browser Initialization Error:', error);
+    if (globalContext) console.log(`[Debug] globalContext nulled due to error at ${new Date().toISOString()}`);
     globalContext = null;
     throw error;
   } finally {
@@ -224,6 +234,7 @@ function isContextHealthy() {
  */
 export async function getBrowser() {
   if (globalContext && isContextHealthy()) {
+    // console.log(`[Debug] getBrowser returning context ID: ${globalContext._debugId}`);
     return globalContext;
   }
 
@@ -232,13 +243,14 @@ export async function getBrowser() {
   console.log('[getBrowser] Context missing. Waiting for initialization...');
   for (let i = 0; i < 6; i++) {
     if (globalContext && isContextHealthy()) {
+      console.log(`[Debug] getBrowser resolved context ID: ${globalContext._debugId} after wait`);
       return globalContext;
     }
     await new Promise(r => setTimeout(r, 500));
   }
 
   // If we don't have a context after waiting
-  console.warn('⚠️ getBrowser called but context is missing. Returning null.');
+  console.warn(`⚠️ getBrowser called but context is missing. Returning null. (globalContext is ${globalContext ? 'SET' : 'NULL'})`);
   return null;
 }
 
