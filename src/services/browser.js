@@ -1,7 +1,6 @@
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { FingerprintGenerator } from 'fingerprint-generator';
-import { FingerprintInjector } from 'fingerprint-injector';
+
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
@@ -15,8 +14,7 @@ chromium.use(stealth);
 let globalContext = null;
 let isInitializing = false;
 
-const fingerprintGenerator = new FingerprintGenerator();
-const fingerprintInjector = new FingerprintInjector();
+
 
 const IS_MAC = process.platform === 'darwin';
 
@@ -101,16 +99,8 @@ export async function initBrowser() {
     globalContext.setDefaultTimeout(30000);
     globalContext.setDefaultNavigationTimeout(60000);
 
-    // Generate Fingerprint matching the OS
-    const fingerprint = fingerprintGenerator.getFingerprint({
-      devices: ['desktop'],
-      operatingSystems: [IS_MAC ? 'macos' : 'windows'],
-      browsers: [{ name: 'chrome', minVersion: 110 }]
-    });
-
-    // Inject Fingerprint
-    await fingerprintInjector.attachFingerprintToPlaywright(globalContext, fingerprint);
-    console.log(`[Stealth] Fingerprint injected: ${fingerprint.fingerprint.navigator.userAgent}`);
+    // Fingerprint injection removed to use real device characteristics
+    console.log(`[Stealth] Using native device characteristics (Fingerprint injection disabled)`);
 
     // Critical Fix: JS-маскування (Additional custom scripts)
     await applyStealthScripts(globalContext);
