@@ -76,6 +76,7 @@ echo [INFO] Завантаження коду з GitHub...
 git clone %REPO_URL% "%BOT_DIR%" >nul 2>&1
 cd /d "%BOT_DIR%"
 echo [INFO] Встановлення бібліотек (npm install)...
+if exist package-lock.json del package-lock.json
 call npm install --quiet
 echo [INFO] Налаштування браузера (playwright)...
 call npx playwright install chromium >nul 2>&1
@@ -239,6 +240,7 @@ goto SETTINGS_MENU
 cls
 cd /d "%BOT_DIR%"
 git pull
+if exist package-lock.json del package-lock.json
 call npm install
 echo [SUCCESS] Оновлено.
 pause
