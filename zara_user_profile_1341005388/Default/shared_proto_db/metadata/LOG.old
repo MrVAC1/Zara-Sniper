@@ -1,3 +1,2 @@
-2026/01/21-19:30:54.330 3ca8 Reusing MANIFEST C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\shared_proto_db\metadata/MANIFEST-000001
-2026/01/21-19:30:54.330 3ca8 Recovering log #3
-2026/01/21-19:30:54.331 3ca8 Reusing old log C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\shared_proto_db\metadata/000003.log 
+2026/01/31-19:40:06.821 4530 Creating DB C:\Users\Максим\Desktop\Нова папка\Zara-Sniper\zara_user_profile_1341005388\Default\shared_proto_db\metadata since it was missing.
+2026/01/31-19:40:06.961 4530 Reusing MANIFEST C:\Users\Максим\Desktop\Нова папка\Zara-Sniper\zara_user_profile_1341005388\Default\shared_proto_db\metadata/MANIFEST-000001

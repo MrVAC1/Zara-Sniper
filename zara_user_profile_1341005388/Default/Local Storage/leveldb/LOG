@@ -1,9 +1,6 @@
-2026/01/21-20:10:36.107 43d0 Reusing MANIFEST C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\Local Storage\leveldb/MANIFEST-000001
-2026/01/21-20:10:36.115 43d0 Recovering log #19
-2026/01/21-20:10:36.119 43d0 Reusing old log C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\Local Storage\leveldb/000019.log 
-2026/01/21-20:11:36.137 4ac0 Level-0 table #24: started
-2026/01/21-20:11:36.146 4ac0 Level-0 table #24: 182096 bytes OK
-2026/01/21-20:11:36.149 4ac0 Delete type=0 #19
-2026/01/21-20:13:16.101 4ac0 Level-0 table #26: started
-2026/01/21-20:13:16.112 4ac0 Level-0 table #26: 174033 bytes OK
-2026/01/21-20:13:16.115 4ac0 Delete type=0 #23
+2026/01/31-20:14:04.288 5eac Reusing MANIFEST C:\Users\Максим\Desktop\Нова папка\Zara-Sniper\zara_user_profile_1341005388\Default\Local Storage\leveldb/MANIFEST-000001
+2026/01/31-20:14:04.301 5eac Recovering log #4
+2026/01/31-20:14:04.307 5eac Reusing old log C:\Users\Максим\Desktop\Нова папка\Zara-Sniper\zara_user_profile_1341005388\Default\Local Storage\leveldb/000004.log 
+2026/01/31-20:15:04.321 4510 Level-0 table #8: started
+2026/01/31-20:15:04.340 4510 Level-0 table #8: 197143 bytes OK
+2026/01/31-20:15:04.345 4510 Delete type=0 #4

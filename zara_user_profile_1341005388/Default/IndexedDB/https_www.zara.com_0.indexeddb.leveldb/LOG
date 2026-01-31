@@ -1,14 +1,4 @@
-2026/01/21-20:21:02.455 415c Reusing MANIFEST C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\IndexedDB\https_www.zara.com_0.indexeddb.leveldb/MANIFEST-000001
-2026/01/21-20:21:02.456 415c Recovering log #141
-2026/01/21-20:21:02.456 415c Reusing old log C:\Users\Максим\Desktop\ZARA_2\zara_user_profile_1341005388\Default\IndexedDB\https_www.zara.com_0.indexeddb.leveldb/000141.log 
-2026/01/21-20:21:02.456 415c Delete type=2 #139
-2026/01/21-20:21:02.514 41a8 Level-0 table #146: started
-2026/01/21-20:21:02.531 41a8 Level-0 table #146: 1376 bytes OK
-2026/01/21-20:21:02.532 41a8 Delete type=0 #141
-2026/01/21-20:21:02.534 415c Manual compaction at level-0 from '\x00*\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00+\x00\x00\x00' @ 0 : 0; will stop at '\x00*\x01\x03\x03\x00\x00\x00\x00\x00\x00\xf0?' @ 3693 : 1
-2026/01/21-20:21:02.535 415c Compacting 1@0 + 1@1 files
-2026/01/21-20:21:02.551 415c Generated table #147@0: 104 keys, 2290 bytes
-2026/01/21-20:21:02.551 415c Compacted 1@0 + 1@1 files => 2290 bytes
-2026/01/21-20:21:02.552 415c compacted to: files[ 0 1 1 0 0 0 0 ]
-2026/01/21-20:21:02.552 415c Delete type=2 #146
-2026/01/21-20:21:02.553 415c Manual compaction at level-0 from '\x00*\x01\x03\x03\x00\x00\x00\x00\x00\x00\xf0?' @ 3693 : 1 .. '\x00+\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/01/31-20:14:52.138 5850 Reusing MANIFEST C:\Users\Максим\Desktop\Нова папка\Zara-Sniper\zara_user_profile_1341005388\Default\IndexedDB\https_www.zara.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/01/31-20:14:52.139 5850 Recovering log #18
+2026/01/31-20:14:52.139 5850 Reusing old log C:\Users\Максим\Desktop\Нова папка\Zara-Sniper\zara_user_profile_1341005388\Default\IndexedDB\https_www.zara.com_0.indexeddb.leveldb/000018.log 
+2026/01/31-20:14:52.140 5850 Delete type=2 #16
