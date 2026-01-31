@@ -280,6 +280,12 @@ export function startAutoCleanup(context, activePages) {
           // Usually the first tab (index 0) is the persistent home page.
           if (i === 0) continue;
 
+          // SAFEGUARD: Don't close if it's the LAST tab
+          if (context.pages().length <= 1) {
+            console.warn('[Cleaner] Skip closing last tab to preserve context.');
+            continue;
+          }
+
           const url = page.url();
           const isBlank = url === 'about:blank' || url === 'data:,' || url === '';
 
