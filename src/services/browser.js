@@ -1,23 +1,26 @@
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
+import { createRequire } from 'module';
 
 dotenv.config();
 
-// Налаштування Stealth плагіна
+// Initialize require for JSON import compatibility
+const require = createRequire(import.meta.url);
+
+// Configure Stealth Plugin
 const stealth = StealthPlugin();
 chromium.use(stealth);
 
 let globalContext = null;
 let isInitializing = false;
 
-
-
 const IS_MAC = process.platform === 'darwin';
 
+// User Agent based on OS
 export const USER_AGENT = IS_MAC
   ? 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -31,21 +34,78 @@ const LAUNCH_ARGS = [
   '--disable-web-security',
   '--disable-features=IsolateOrigins,site-per-process',
   '--disable-site-isolation-trials',
-  '--use-fake-ui-for-media-stream' // NEW: Stealth arg
+  '--use-fake-ui-for-media-stream'
 ];
 
 /**
- * Ініціалізація браузера з постійним контекстом (Singleton)
+ * Validates Environment for Legacy macOS
  */
-export async function initBrowser() {
-  // Якщо контекст вже існує і активний - повертаємо його
+function validateEnvironment() {
+  if (process.platform !== 'darwin') return;
+
+  const release = os.release();
+  const majorVersion = parseInt(release.split('.')[0], 10);
+
+  // macOS 12 (Monterey) corresponds to Darwin 21.0.0
+  // macOS 11 (Big Sur) is Darwin 20.0.0
+  // Anything < 21 is considered "Legacy" in this context
+  const isLegacyMacOS = majorVersion < 21;
+
+  if (isLegacyMacOS) {
+    console.log(`[System] Detected Legacy macOS (Darwin ${majorVersion}). Verifying Playwright compatibility...`);
+
+    try {
+      // Check installed Playwright version
+      const pwPackage = require('playwright/package.json');
+      const version = pwPackage.version;
+
+      // Allow 1.35.x as the last safe version
+      // 1.35.0 is the main target, but 1.35.1 might exist.
+      // We check if it starts with '1.35.' or is lower than 1.36
+      // Simple check: strict equality or semantic comparison
+
+      const [major, minor] = version.split('.').map(Number);
+
+      // If version is newer than 1.35.x (e.g. 1.36+ or 2.x)
+      if (major > 1 || (major === 1 && minor > 35)) {
+        console.error(`\n❌ [CRITICAL ERROR] Incompatible Playwright version for macOS 11 (Big Sur)`);
+        console.error(`   Current version: ${version}`);
+        console.error(`   Required version: 1.35.0`);
+        console.error(`\n👉 Please run the following commands to fix:`);
+        console.error(`   npm install playwright@1.35.0`);
+        console.error(`   npx playwright install chromium`);
+        console.error(`\n   Newer Chromium versions rely on system libraries missing in your OS.\n`);
+        throw new Error('Playwright version incompatible with Legacy macOS');
+      }
+
+      console.log(`[System] ✅ Environment passed: macOS (Legacy) + Playwright ${version}`);
+    } catch (e) {
+      if (e.message.includes('Incompatible')) throw e;
+      console.warn(`[System] ⚠️ Could not verify Playwright version: ${e.message}`);
+    }
+  }
+}
+
+/**
+ * Initialize Browser with Persistent Context (Singleton)
+ * @param {string} userDataDir - Path to the user data directory (REQUIRED)
+ */
+export async function initBrowser(userDataDir) {
+  // Validate Environment first
+  validateEnvironment();
+
+  if (!userDataDir) {
+    throw new Error('initBrowser requires userDataDir argument');
+  }
+
+  // If context exists and healthy, return it
   if (globalContext && isContextHealthy()) {
     return globalContext;
   }
 
-  // Запобігання подвійній ініціалізації
+  // Prevent double initialization
   if (isInitializing) {
-    console.log('🔄 Браузер вже ініціалізується, очікування...');
+    console.log('🔄 Browser is already initializing, waiting...');
     while (isInitializing) {
       await new Promise(r => setTimeout(r, 500));
       if (globalContext && isContextHealthy()) return globalContext;
@@ -55,33 +115,33 @@ export async function initBrowser() {
   isInitializing = true;
 
   try {
-    // Якщо контекст був, але "мертвий" - закриваємо
+    // Determine Executable Path
+    // Pure Playwright Chromium (no system chrome)
+    // By default, playwright-extra uses the bundled chromium if 'channel' is not specified
+    // and executablePath is not set.
+
+    // Close existing dead context
     if (globalContext) {
       try { await globalContext.close(); } catch (e) { }
       globalContext = null;
     }
 
-    // --- ISOLATION: User-Specific Profile ---
-    const ownerId = process.env.OWNER_ID ? process.env.OWNER_ID.split(',')[0].trim() : 'default';
-    const sanitizedOwner = ownerId.replace(/[^a-zA-Z0-9]/g, '');
-    const userDataDir = path.join(process.cwd(), `zara_user_profile_${sanitizedOwner}`);
-
-    // Очищення Singleton Lock (для Windows/Chromium глюків)
+    // Handle Singleton Lock (Windows/Chromium glitches)
     const lockFile = path.join(userDataDir, 'SingletonLock');
     if (fs.existsSync(lockFile)) {
       try {
-        // Чекаємо трохи, можливо процес ще завершується
+        // Wait a bit
         await new Promise(r => setTimeout(r, 1000));
         if (fs.existsSync(lockFile)) {
           fs.unlinkSync(lockFile);
-          console.log('🧹 SingletonLock видалено примусово.');
+          console.log('🧹 SingletonLock removed forcibly.');
         }
       } catch (e) {
-        console.warn('⚠️ Не вдалося видалити SingletonLock (можливо браузер запущено):', e.message);
+        console.warn('⚠️ Could not remove SingletonLock:', e.message);
       }
     }
 
-    console.log(`[Init] Запуск браузера (Chromium)...`);
+    console.log(`[Init] Launching Browser (Chromium Bundled)...`);
     console.log(`[Profile] ${userDataDir}`);
 
     globalContext = await chromium.launchPersistentContext(userDataDir, {
@@ -92,53 +152,51 @@ export async function initBrowser() {
       userAgent: USER_AGENT,
       locale: 'uk-UA',
       timezoneId: 'Europe/Kyiv',
-      // slowMo: 50, // Можна розкоментувати для дебагу
+      // Strict isolation: Do not use system Chrome
+      channel: undefined,
+      executablePath: undefined
     });
 
-    // Налаштування таймаутів за замовчуванням
+    // Default Timeouts
     globalContext.setDefaultTimeout(30000);
     globalContext.setDefaultNavigationTimeout(60000);
 
-    // Fingerprint injection removed to use real device characteristics
     console.log(`[Stealth] Using native device characteristics (Fingerprint injection disabled)`);
 
-    // Critical Fix: JS-маскування (Additional custom scripts)
+    // Apply Stealth Scripts
     await applyStealthScripts(globalContext);
 
     // --- GHOST PAGE CLEANER ---
     globalContext.on('page', async (page) => {
       try {
-        // Wait 3s to allow for initial redirect
         await new Promise(r => setTimeout(r, 3000));
         if (page.isClosed()) return;
 
         const url = page.url();
         if (url === 'about:blank' || url === 'data:,') {
-          console.log('[Cleaner] Закрито порожню вкладку (about:blank) для економії ресурсів.');
+          console.log('[Cleaner] Closed empty tab (about:blank) to save resources.');
           await page.close().catch(() => { });
         }
       } catch (e) { }
     });
     // ---------------------------
 
-    // Обробка події відключення
     globalContext.on('close', () => {
-      console.log('⚠️ Браузерний контекст було закрито!');
+      console.log('⚠️ Browser context closed!');
     });
 
-    // Також слухаємо disconnected, про всяк випадок
     if (globalContext.browser()) {
       globalContext.browser().on('disconnected', () => {
-        console.log('⚠️ Браузер відʼєднано! Завершення роботи...');
+        console.log('⚠️ Browser disconnected! Exiting...');
         process.exit(0);
       });
     }
 
-    console.log('[Session] ✅ Браузер ініціалізовано.');
+    console.log('[Session] ✅ Browser initialized.');
     return globalContext;
   } catch (error) {
-    console.error('❌ Помилка ініціалізації браузера:', error);
-    globalContext = null; // Скидаємо, щоб можна було спробувати знову
+    console.error('❌ Browser Initialization Error:', error);
+    globalContext = null;
     throw error;
   } finally {
     isInitializing = false;
@@ -146,15 +204,12 @@ export async function initBrowser() {
 }
 
 /**
- * Перевірка "здоров'я" контексту
+ * Check Context Health
  */
 function isContextHealthy() {
   if (!globalContext) return false;
   try {
-    // Перевіряємо, чи не закритий браузер
     if (globalContext.browser && !globalContext.browser().isConnected()) return false;
-    // Для launchPersistentContext немає методу isConnected прямо на контексті в деяких версіях, 
-    // але pages() має працювати
     globalContext.pages();
     return true;
   } catch (e) {
@@ -163,32 +218,37 @@ function isContextHealthy() {
 }
 
 /**
- * Отримати поточний інстанс (або ініціалізувати новий)
+ * Get Current Instance (or init new)
+ * Note: If init is needed, index.js relies on passing userDataDir.
+ * If called without args when no context exists, it will fail safely in initBrowser.
  */
 export async function getBrowser() {
-  if (!globalContext || !isContextHealthy()) {
-    return await initBrowser();
+  if (globalContext && isContextHealthy()) {
+    return globalContext;
   }
-  return globalContext;
+  // If we don't have a context, we can't auto-init without the path.
+  // The app architecture should ensure initBrowser is called first in main().
+  console.warn('⚠️ getBrowser called but context is missing. Returning null.');
+  return null;
 }
 
 export async function closeBrowser() {
   if (globalContext) {
     await globalContext.close();
     globalContext = null;
-    console.log('🔌 Браузер закрито');
+    console.log('🔌 Browser closed');
   }
 }
 
 /**
- * Періодична чистка вкладок (Garbage Collection)
+ * Auto-Cleanup Tabs
  */
 export function startAutoCleanup(context, activePages) {
-  console.log('[Cleaner] Авто-чистка вкладок активована (кожні 10 хв)');
+  console.log('[Cleaner] Auto-cleanup activated (every 10 min)');
 
   setInterval(async () => {
     try {
-      console.log('[Cleaner] Запуск періодичної чистки вкладок...');
+      console.log('[Cleaner] Running periodic tab cleanup...');
       const pages = context.pages();
 
       for (const page of pages) {
@@ -198,7 +258,6 @@ export function startAutoCleanup(context, activePages) {
           const url = page.url();
           const isBlank = url === 'about:blank' || url === 'data:,' || url === '';
 
-          // Перевіряємо чи сторінка прив'язана до активного завдання
           let isAssociated = false;
           if (activePages) {
             for (const [taskId, activePage] of activePages.entries()) {
@@ -209,27 +268,27 @@ export function startAutoCleanup(context, activePages) {
             }
           }
 
-          // Закриваємо якщо порожня і не прив'язана
           if (!isAssociated && isBlank) {
-            console.log(`[Cleaner] Закриття неактивної вкладки: ${url || 'empty'}`);
+            console.log(`[Cleaner] Closing inactive tab: ${url || 'empty'}`);
             await page.close().catch(() => { });
           }
         } catch (e) { }
       }
     } catch (e) {
-      console.error('[Cleaner] Помилка чистки:', e.message);
+      console.error('[Cleaner] Cleanup error:', e.message);
     }
-  }, 10 * 60 * 1000); // 10 хвилин
+  }, 10 * 60 * 1000);
 }
 
 /**
- * Створення нової сторінки в існуючому контексті
+ * Create Task Page
  */
 export async function createTaskPage(taskId) {
   const context = await getBrowser();
+  if (!context) throw new Error('Browser not initialized');
+
   const page = await context.newPage();
 
-  // Базові заголовки
   await page.setExtraHTTPHeaders({
     'Accept-Language': 'uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7'
   });
@@ -238,7 +297,7 @@ export async function createTaskPage(taskId) {
 }
 
 /**
- * Ін'єкція кук для обходу регіональних обмежень (Phase 0)
+ * Inject Regional Cookies
  */
 export async function injectRegionalCookies(context, url) {
   if (!url) return;
@@ -247,7 +306,6 @@ export async function injectRegionalCookies(context, url) {
     const domain = new URL(url).hostname;
     const cleanDomain = domain.replace('www.', '');
 
-    // Визначаємо Store ID за доменом (спрощено)
     let storeId = '11767'; // Default UA
     if (domain.includes('zara.com/es')) storeId = '10701';
     if (domain.includes('zara.com/pl')) storeId = '10659';
@@ -256,7 +314,7 @@ export async function injectRegionalCookies(context, url) {
     const cookies = [
       {
         name: 'CookiesConsent',
-        value: 'C0001%3BC0002%3BC0003%3BC0004', // Pre-accepted all groups
+        value: 'C0001%3BC0002%3BC0003%3BC0004',
         domain: `.${cleanDomain}`,
         path: '/'
       },
@@ -275,29 +333,33 @@ export async function injectRegionalCookies(context, url) {
     ];
 
     await context.addCookies(cookies);
-    console.log(`[Cookies] Ін'єктовано регіональні куки для ${cleanDomain}`);
+    console.log(`[Cookies] Injected regional cookies for ${cleanDomain}`);
   } catch (e) {
-    console.warn(`[Cookies] Помилка ін'єкції: ${e.message}`);
+    console.warn(`[Cookies] Injection error: ${e.message}`);
   }
 }
 
 /**
- * Окремий режим для входу (Login Mode)
+ * Login Session Mode
+ * @param {string} userDataDir - Path to profile (REQUIRED)
  */
-export async function startLoginSession() {
-  // Закриваємо поточну сесію, якщо є, щоб звільнити профіль
+export async function startLoginSession(userDataDir) {
+  // Check Env
+  validateEnvironment();
+
+  if (!userDataDir) {
+    throw new Error('startLoginSession requires userDataDir');
+  }
+
   await closeBrowser();
 
   try {
-    const ownerId = process.env.OWNER_ID ? process.env.OWNER_ID.split(',')[0].trim() : 'default';
-    const sanitizedOwner = ownerId.replace(/[^a-zA-Z0-9]/g, '');
-    const userDataDir = path.join(process.cwd(), `zara_user_profile_${sanitizedOwner}`);
-    console.log('\n🔑 [Login Mode] Запуск сесії для авторизації...');
+    console.log('\n🔑 [Login Mode] Starting session for authorization...');
     console.log('--------------------------------------------------');
-    console.log('📝 ІНСТРУКЦІЯ:');
-    console.log('1. У вікні браузера, що відкриється, увійдіть у свій акаунт Zara.');
-    console.log('2. Пройдіть капчу або підтвердження через Email/SMS, якщо потрібно.');
-    console.log('3. ПІСЛЯ успішного входу — просто ЗАКРИЙТЕ вікно браузера.');
+    console.log('📝 INSTRUCTIONS:');
+    console.log('1. Login to your Zara account in the opened browser.');
+    console.log('2. Complete CAPTCHA or Email/SMS verification if needed.');
+    console.log('3. AFTER successful login — simply CLOSE the browser window.');
     console.log('--------------------------------------------------\n');
 
     const context = await chromium.launchPersistentContext(userDataDir, {
@@ -313,18 +375,15 @@ export async function startLoginSession() {
     await applyStealthScripts(context);
 
     const page = await context.newPage();
-    page.setDefaultNavigationTimeout(0); // No timeout for manual login
+    page.setDefaultNavigationTimeout(0);
     page.setDefaultTimeout(0);
 
-    // Navigate directly to identification page
-    console.log('🌐 Перехід на сторінку входу Zara UA...');
+    console.log('🌐 Navigating to ID page...');
     await page.goto('https://www.zara.com/ua/uk/identification', { waitUntil: 'domcontentloaded' })
       .catch(() => page.goto('https://www.zara.com/ua/uk/', { waitUntil: 'domcontentloaded' }));
 
-    // Wait for the window to close
     await new Promise((resolve) => {
       context.on('close', resolve);
-      // Also resolve if all pages are closed manually
       context.on('page', (p) => {
         p.on('close', () => {
           if (context.pages().length === 0) resolve();
@@ -332,22 +391,21 @@ export async function startLoginSession() {
       });
     });
 
-    // Before fully exiting, try to log status
     try {
       const cookies = await context.cookies();
       const sessionCookie = cookies.find(c => c.name === 'Z_SESSION_ID' || c.name === 'itx-v-ev');
-      console.log(`\n✅ Сесію завершено. Отримано кук: ${cookies.length}`);
+      console.log(`\n✅ Session ended. Cookies retrieved: ${cookies.length}`);
       if (sessionCookie) {
-        console.log(`📡 Виявлено активну сесію: ${sessionCookie.name} (Захищено)`);
+        console.log(`📡 Active session detected: ${sessionCookie.name} (Protected)`);
       } else {
-        console.warn('⚠️ Попередження: Основну сесію не знайдено. Переконайтеся, що ви натиснули "Увійти".');
+        console.warn('⚠️ Warning: Main session cookie not found. Ensure you logged in.');
       }
     } catch (e) { }
 
     await context.close().catch(() => { });
-    console.log('🚪 Браузер закрито. Профіль оновлено.');
+    console.log('🚪 Browser closed. Profile updated.');
   } catch (error) {
-    console.error('❌ Помилка режиму входу:', error);
+    console.error('❌ Login Mode Error:', error);
   }
 }
 
@@ -360,7 +418,7 @@ export async function takeScreenshot(page, path = null) {
     });
     return screenshot;
   } catch (error) {
-    console.error('❌ Помилка скріншота:', error.message);
+    console.error('❌ Screenshot error:', error.message);
     return null;
   }
 }
@@ -369,24 +427,19 @@ export async function closeAlerts(page) {
   try {
     if (page.isClosed()) return;
 
-    // Селектори для закриття діалогових вікон
     const selectors = [
-      '[data-qa-id="zds-alert-dialog-cancel-button"]', // Основний селектор з ТЗ
+      '[data-qa-id="zds-alert-dialog-cancel-button"]',
       '[data-testid="dialog-close-button"]',
       'button[aria-label="Close"]',
-      '#onetrust-accept-btn-handler', // Cookies Accept
-      '#onetrust-reject-all-handler', // Cookies Reject
+      '#onetrust-accept-btn-handler',
+      '#onetrust-reject-all-handler',
       '.cookie-settings-banner button',
-
-      // NEW: Language/Region Switcher Modal (Ignore/Close)
-      // "При переході на сайт іншої країни вибиває сповіщення... ігнорувати це повідомлення"
-      // Usually "Go to [Country]" or "Stay on this site"
       'button:has-text("Stay on this site")',
       'button:has-text("Залишитися на цьому сайті")',
-      'button:has-text("Kontynuuj na tej stronie")', // PL
-      'button:has-text("Auf dieser Website bleiben")', // DE
-      'button:has-text("Continuar en España")', // ES
-      '[class*="market-selector"] button', // Generic market selector closer
+      'button:has-text("Kontynuuj na tej stronie")',
+      'button:has-text("Auf dieser Website bleiben")',
+      'button:has-text("Continuar en España")',
+      '[class*="market-selector"] button',
       '[data-qa-action="market-selector-close"]',
       '[class*="layout-header-links-modal"] button:first-child'
     ];
@@ -395,41 +448,30 @@ export async function closeAlerts(page) {
       try {
         const element = await page.$(selector);
         if (element && await element.isVisible()) {
-          console.log(`[Alert] Знайдено спливаюче вікно (${selector}), закриваю...`);
+          console.log(`[Alert] Found popup (${selector}), closing...`);
           await element.click();
-          // Коротка пауза для анімації закриття
           await new Promise(r => setTimeout(r, 500));
         }
-      } catch (e) {
-        // Ігноруємо помилки кліку
-      }
+      } catch (e) { }
     }
-  } catch (error) {
-    // Ігноруємо глобальні помилки (наприклад, context destroyed)
-  }
+  } catch (error) { }
 }
 
 export async function removeUIObstacles(page) {
   try {
     if (page.isClosed()) return;
-
-    // Спочатку спробуємо закрити легально
     await closeAlerts(page);
 
-    // Phase 2: Handle Region/Language Selector Fallback
     try {
       const stayOnSiteSelectors = [
         'button:has-text("Stay on this site")',
         'button:has-text("Залишитися на цьому сайті")',
-        '[class*="layout-header-links-modal"] button:first-child', // Heuristic for primary action
+        '[class*="layout-header-links-modal"] button:first-child',
         '[data-qa-action="stay-on-site"]'
       ];
-
-      // Short check without waiting too long
       for (const selector of stayOnSiteSelectors) {
         const btn = await page.$(selector);
         if (btn && await btn.isVisible()) {
-          console.log('[UI] Found "Stay on this site" modal, clicking...');
           await btn.click();
           await new Promise(r => setTimeout(r, 500));
           break;
@@ -448,16 +490,13 @@ export async function removeUIObstacles(page) {
         '[id="onetrust-banner-sdk"]',
         '.cookie-settings-banner'
       ];
-
       selectors.forEach(selector => {
         try {
           document.querySelectorAll(selector).forEach(el => el.remove());
         } catch (e) { }
       });
     });
-  } catch (error) {
-    // Ігнор помилок
-  }
+  } catch (error) { }
 }
 
 async function applyStealthScripts(context) {

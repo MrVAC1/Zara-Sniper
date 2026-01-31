@@ -83,6 +83,7 @@ install_bot() {
     git clone "$REPO_URL" "$BOT_DIR"
     cd "$BOT_DIR"
     echo "[INFO] Встановлення бібліотек (npm install)..."
+    rm -f package-lock.json
     npm install --quiet
     echo "[INFO] Налаштування браузера (playwright)..."
     npx playwright install chromium
@@ -176,7 +177,7 @@ while true; do
     read choice
     case $choice in
         1) install_bot ;;
-        2) cd "$BOT_DIR" && git pull && npm install && read -p "Оновлено. Enter..." ;;
+        2) cd "$BOT_DIR" && git pull && rm -f package-lock.json && npm install && read -p "Оновлено. Enter..." ;;
         3) cd "$BOT_DIR" && npm start ;;
         4) 
             if [ -f "$BOT_DIR/.env" ]; then
@@ -191,12 +192,24 @@ while true; do
                     rm -f "$pid_file"
                     echo "[SUCCESS] Bot process stopped (PID: $bot_pid)."
                 else
-                     echo "[WARN] PID file ($pid_file) not found! Running global cleanup..."
-                     pkill -f "node"
-                     echo "[SUCCESS] All node processes stopped."
+                     echo "[WARN] PID file ($pid_file) not found!"
+                     echo "[WARNING] This will stop ALL Node.js processes on your machine."
+                     read -p "Are you sure? (y/N): " confirm
+                     if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                        pkill -f "node"
+                        echo "[SUCCESS] All node processes stopped."
+                     else
+                        echo "[INFO] Cancelled."
+                     fi
                 fi
             else
-                pkill -f "node"
+                echo "[WARN] .env file not found."
+                echo "[WARNING] This will stop ALL Node.js processes on your machine."
+                read -p "Are you sure? (y/N): " confirm
+                if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                    pkill -f "node"
+                    echo "[SUCCESS] All node processes stopped."
+                fi
             fi
             read -p "Enter..." ;;
         5) 

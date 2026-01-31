@@ -182,7 +182,9 @@ async function main() {
     const primaryOwner = ownerIdFull.split(',')[0].trim();
     const sanitizedPidOwner = primaryOwner.replace(/[^a-zA-Z0-9]/g, '');
     const pidFileName = `.pid_${sanitizedPidOwner}`;
+
     const pidFilePath = path.join(process.cwd(), pidFileName);
+    const userDataDir = path.join(process.cwd(), `zara_user_profile_${sanitizedPidOwner}`);
 
     try {
       fs.writeFileSync(pidFilePath, process.pid.toString());
@@ -224,7 +226,7 @@ async function main() {
 
     // Перевірка режиму входу (Login Mode)
     if (process.argv.includes('--login')) {
-      await startLoginSession();
+      await startLoginSession(userDataDir);
       // Після закриття вікна входу завершуємо роботу скрипта, 
       // щоб користувач міг перезапустити бота в звичайному режимі
       process.exit(0);
@@ -232,7 +234,7 @@ async function main() {
 
     // Ініціалізація браузера (стандартний режим)
     console.log('🔄 Ініціалізація браузера...');
-    const context = await initBrowser();
+    const context = await initBrowser(userDataDir);
 
     // Start Auto-Cleanup
     startAutoCleanup(context, activePages);
