@@ -224,10 +224,13 @@ export async function initializeActiveTasks(context, telegramBot) {
 
         // Start Sniper with existing page
         // We pass the page explicitly so startSniper doesn't create a new one
-        // NON-BLOCKING: We do not await here so other tasks can start restoring immediately
+        // NON-BLOCKING for the sniper itself, but we throttle the LOOP
         startSniper(task._id, telegramBot, page).catch(err => {
           console.error(`❌ [Bootstrap] Failed to start sniper for ${task._id}:`, err);
         });
+
+        // THROTTLE: Wait 2s before restoring next task (Legacy macOS crash fix)
+        await new Promise(r => setTimeout(r, 2000));
 
       } catch (error) {
         console.error(`❌ [Bootstrap] Failed to restore task ${task._id}: ${error.message}`);

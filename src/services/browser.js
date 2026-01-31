@@ -271,9 +271,14 @@ export function startAutoCleanup(context, activePages) {
       console.log('[Cleaner] Running periodic tab cleanup...');
       const pages = context.pages();
 
-      for (const page of pages) {
+      for (let i = 0; i < pages.length; i++) {
+        const page = pages[i];
         try {
           if (page.isClosed()) continue;
+
+          // PROTECT STARTUP TAB (Main Page)
+          // Usually the first tab (index 0) is the persistent home page.
+          if (i === 0) continue;
 
           const url = page.url();
           const isBlank = url === 'about:blank' || url === 'data:,' || url === '';
