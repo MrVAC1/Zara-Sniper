@@ -178,6 +178,12 @@ async function main() {
   try {
     console.log('🚀 Запуск Zara Sniper Bot...');
 
+    // --- CONTAINER NETWORK WAIT ---
+    // Hugging Face Spaces can have slow DNS resolution on cold boot
+    console.log('[System] Waiting 10s for container network stabilization...');
+    await new Promise(resolve => setTimeout(resolve, 10000));
+    // ------------------------------
+
     // --- HF SPACES KEEP-ALIVE ---
     if (process.env.PORT) {
       http.createServer((req, res) => {
@@ -305,10 +311,29 @@ async function main() {
     // Збереження екземпляру бота
     setBotInstance(bot);
 
-    // 5. Bot Launch
+    // 5. Bot Launch (Robust Retry Mechanism)
     // Запуск бота з очищенням черги очікуючих оновлень
-    await bot.launch({ dropPendingUpdates: true });
-    console.log('✅ Telegram бот запущено (попередні оновлення відхилено)');
+    const MAX_RETRIES = 3;
+    let botLaunched = false;
+
+    for (let i = 0; i < MAX_RETRIES; i++) {
+      try {
+        await bot.launch({ dropPendingUpdates: true });
+        console.log('✅ Telegram бот запущено (попередні оновлення відхилено)');
+        botLaunched = true;
+        break;
+      } catch (botErr) {
+        console.error(`❌ Bot Launch Error (Attempt ${i + 1}/${MAX_RETRIES}):`, botErr.message);
+        if (i < MAX_RETRIES - 1) {
+          console.log('[System] Retrying Telegram connection in 5s...');
+          await new Promise(r => setTimeout(r, 5000));
+        }
+      }
+    }
+
+    if (!botLaunched) {
+      throw new Error('Failed to connect to Telegram after multiple attempts.');
+    }
 
     // startAllSnipers(bot); // Видаляємо або коментуємо, щоб не дублювати запуск
 
