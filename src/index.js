@@ -51,19 +51,27 @@ if (!BOT_TOKEN || !OWNER_ID_RAW) {
 }
 
 // Ініціалізація бота
-const telegramOptions = {};
+import { proxyManager } from './services/proxyManager.js';
+
+// Ініціалізація бота
+let bot;
+let telegramOptions = {};
+
+// Use Proxy Manager for Telegram (Priority)
+const currentProxy = proxyManager.getCurrentProxy();
 if (process.env.PROXY_URL) {
   const proxyUrl = process.env.PROXY_URL;
-  console.log(`[System] Using Proxy for Telegram: ${proxyUrl.startsWith('socks') ? 'SOCKS' : 'HTTPS'}`);
-
-  if (proxyUrl.startsWith('socks')) {
-    telegramOptions.agent = new SocksProxyAgent(proxyUrl);
-  } else {
-    telegramOptions.agent = new HttpsProxyAgent(proxyUrl);
-  }
+  console.log(`[System] Using Env Proxy for Telegram: ${proxyUrl.startsWith('socks') ? 'SOCKS' : 'HTTPS'}`);
+  telegramOptions.agent = proxyUrl.startsWith('socks') ? new SocksProxyAgent(proxyUrl) : new HttpsProxyAgent(proxyUrl);
+} else if (currentProxy) {
+  const proxyUrl = currentProxy.server.replace('http://', 'http://' + (currentProxy.username ? `${currentProxy.username}:${currentProxy.password}@` : ''));
+  console.log(`[System] ✅ Connecting via Proxy: ${currentProxy.server}`);
+  telegramOptions.agent = new HttpsProxyAgent(proxyUrl);
+} else {
+  console.warn(`[System] ⚠️ Direct Connection (No Proxy Available)`);
 }
 
-const bot = new Telegraf(BOT_TOKEN, { telegram: telegramOptions });
+bot = new Telegraf(BOT_TOKEN, { telegram: telegramOptions });
 
 // Middleware безпеки
 bot.use(checkAccess);
@@ -208,7 +216,7 @@ async function main() {
     // ----------------------------
 
     // --- CONTAINER NETWORK WAIT (ROBUST) ---
-    const checkInternet = async (retries = 30, delayMs = 2000) => {
+    const checkInternet = async (retries = 5, delayMs = 2000) => {
       for (let i = 0; i < retries; i++) {
         try {
           await new Promise((resolve, reject) => {
@@ -229,7 +237,7 @@ async function main() {
 
     console.log('[System] Verifying network connectivity...');
     const hasInternet = await checkInternet();
-    if (!hasInternet) console.error('❌ [Network] Warning: DNS resolution failed after 60s.');
+    if (!hasInternet) console.error('❌ [Network] Warning: DNS resolution failed after 10s.');
     // ------------------------------
 
     // --- PID FILE CREATION ---
