@@ -161,19 +161,30 @@ export async function initBrowser(userDataDir, proxyConfig = null) {
       console.log(`[Network] ⚠️ Direct Connection (No Proxy)`);
     }
 
-    globalContext = await chromium.launchPersistentContext(userDataDir, {
+    // Fix for "proxy: expected object, got null"
+    const launchOptions = {
       headless: IS_DOCKER ? true : process.env.HEADLESS === 'true',
       viewport: null,
       ignoreDefaultArgs: ['--enable-automation'],
       args: LAUNCH_ARGS,
-      proxy: proxyConfig, // Inject Proxy Here
       userAgent: USER_AGENT,
       locale: 'uk-UA',
       timezoneId: 'Europe/Kyiv',
-      // Strict isolation: Do not use system Chrome
       channel: undefined,
       executablePath: undefined
-    });
+    };
+
+    if (proxyConfig) {
+      launchOptions.proxy = proxyConfig;
+    }
+
+    // Force IPv4 if not already set globally (Safety net for container)
+    try {
+      const dns = await import('node:dns');
+      if (dns.setDefaultResultOrder) dns.setDefaultResultOrder('ipv4first');
+    } catch (e) { }
+
+    globalContext = await chromium.launchPersistentContext(userDataDir, launchOptions);
 
     // Default Timeouts
     globalContext.setDefaultTimeout(30000);
