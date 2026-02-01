@@ -1,5 +1,4 @@
 import { chromium } from 'playwright-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
@@ -11,9 +10,9 @@ dotenv.config();
 // Initialize require for JSON import compatibility
 const require = createRequire(import.meta.url);
 
-// Configure Stealth Plugin
-const stealth = StealthPlugin();
-chromium.use(stealth);
+// Configure Stealth Plugin (Removed in favor of fingerprint-injector)
+// const stealth = StealthPlugin();
+// chromium.use(stealth);
 
 let globalContext = null;
 let isInitializing = false;
@@ -161,9 +160,66 @@ export async function initBrowser(userDataDir) {
     globalContext.setDefaultTimeout(30000);
     globalContext.setDefaultNavigationTimeout(60000);
 
-    console.log(`[Stealth] Using native device characteristics (Fingerprint injection disabled)`);
+    console.log(`[Stealth] Initializing fingerprint generation...`);
 
-    // Apply Stealth Scripts
+    // --- FINGERPRINT GENERATION LOGIC ---
+    const { FingerprintGenerator } = await import('fingerprint-generator');
+    const { FingerprintInjector } = await import('fingerprint-injector');
+
+    const fingerprintGenerator = new FingerprintGenerator();
+    const fingerprintInjector = new FingerprintInjector();
+
+    let fingerprint;
+    try {
+      fingerprint = fingerprintGenerator.getFingerprint({
+        devices: ['desktop'],
+        operatingSystems: [IS_MAC ? 'macos' : 'windows'],
+        browsers: [{ name: 'chrome', minVersion: 120 }], // Target modern Chrome
+        screen: { minWidth: 1366, minHeight: 768, maxWidth: 3840, maxHeight: 2160 },
+      });
+
+      // safeRetries is internal to the generator logic mostly, but we validate the output here directly.
+      const fpData = fingerprint ? fingerprint.fingerprint : null;
+      if (!fpData || (!fpData.userAgent && (!fpData.navigator || !fpData.navigator.userAgent))) {
+        throw new Error('Generated fingerprint is invalid or empty');
+      }
+
+      const finalUA = fpData.userAgent || fpData.navigator.userAgent;
+      console.log(`[Stealth] Fingerprint generated: ${finalUA.substring(0, 50)}...`);
+    } catch (err) {
+      console.warn(`[Stealth] ⚠️ Fingerprint generation failed: ${err.message}`);
+      console.log(`[Stealth] Using fallback User-Agent due to generation failure`);
+
+      // Fallback
+      fingerprint = {
+        fingerprint: {
+          userAgent: USER_AGENT,
+          navigator: {
+            userAgent: USER_AGENT,
+            platform: IS_MAC ? 'MacIntel' : 'Win32',
+            language: 'uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7',
+            hardwareConcurrency: 4,
+            deviceMemory: 8
+          },
+          screen: {
+            width: 1920,
+            height: 1080,
+            availWidth: 1920,
+            availHeight: 1040,
+            colorDepth: 24,
+            pixelDepth: 24
+          }
+        },
+        headers: {}
+      };
+    }
+
+    // Inject the fingerprint (generated or fallback)
+    await fingerprintInjector.attachFingerprintToPlaywright(globalContext, fingerprint);
+    console.log('[Stealth] Fingerprint injected successfully.');
+    // ------------------------------------
+
+    // Apply Additional Stealth Scripts (Optional / Supplementary)
     await applyStealthScripts(globalContext);
 
     // --- GHOST PAGE CLEANER ---
