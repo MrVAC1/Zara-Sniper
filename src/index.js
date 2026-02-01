@@ -180,10 +180,29 @@ async function main() {
   try {
     console.log('🚀 Запуск Zara Sniper Bot...');
 
-    // --- CONTAINER NETWORK WAIT ---
-    // Hugging Face Spaces can have slow DNS resolution on cold boot
-    console.log('[System] Waiting 10s for container network stabilization...');
-    await new Promise(resolve => setTimeout(resolve, 10000));
+    // --- CONTAINER NETWORK WAIT (ROBUST) ---
+    const checkInternet = async (retries = 30, delayMs = 2000) => {
+      for (let i = 0; i < retries; i++) {
+        try {
+          await new Promise((resolve, reject) => {
+            dns.lookup('api.telegram.org', (err) => {
+              if (err) reject(err);
+              else resolve();
+            });
+          });
+          console.log('✅ [Network] Internet connection confirmed (DNS working).');
+          return true;
+        } catch (e) {
+          console.log(`⏳ [Network] Waiting for connectivity... (${i + 1}/${retries})`);
+          await new Promise(r => setTimeout(r, delayMs));
+        }
+      }
+      return false;
+    };
+
+    console.log('[System] Verifying network connectivity...');
+    const hasInternet = await checkInternet();
+    if (!hasInternet) console.error('❌ [Network] Warning: DNS resolution failed after 60s.');
     // ------------------------------
 
     // --- HF SPACES KEEP-ALIVE ---
@@ -315,7 +334,7 @@ async function main() {
 
     // 5. Bot Launch (Robust Retry Mechanism)
     // Запуск бота з очищенням черги очікуючих оновлень
-    const MAX_RETRIES = 3;
+    const MAX_RETRIES = 15;
     let botLaunched = false;
 
     for (let i = 0; i < MAX_RETRIES; i++) {
