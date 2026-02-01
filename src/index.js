@@ -65,10 +65,10 @@ if (process.env.PROXY_URL) {
   telegramOptions.agent = proxyUrl.startsWith('socks') ? new SocksProxyAgent(proxyUrl) : new HttpsProxyAgent(proxyUrl);
 } else if (currentProxy) {
   const proxyUrl = currentProxy.server.replace('http://', 'http://' + (currentProxy.username ? `${currentProxy.username}:${currentProxy.password}@` : ''));
-  console.log(`[System] ✅ Connecting via Proxy: ${currentProxy.server}`);
+  console.log(`[Network] Telegram: Proxy Active (${currentProxy.server})`);
   telegramOptions.agent = new HttpsProxyAgent(proxyUrl);
 } else {
-  console.warn(`[System] ⚠️ Direct Connection (No Proxy Available)`);
+  console.warn(`[Network] Telegram: Direct Connection (No Proxy Available)`);
 }
 
 bot = new Telegraf(BOT_TOKEN, { telegram: telegramOptions });
@@ -420,28 +420,60 @@ async function main() {
     // Збереження екземпляру бота
     setBotInstance(bot);
 
-    // 5. Bot Launch (Robust Retry Mechanism)
+    // 5. Bot Launch (Robust Retry Mechanism with Proxy Rotation)
     // Запуск бота з очищенням черги очікуючих оновлень
-    const MAX_RETRIES = 15;
-    let botLaunched = false;
+    const MAX_LAUNCH_RETRIES = 50; // Increased retries for resilience
+    let botStarted = false;
 
-    for (let i = 0; i < MAX_RETRIES; i++) {
+    // Use a loop to keep retrying indefinitely if needed (or up to MAX_LAUNCH_RETRIES)
+    // The user requested prevent exit, so we try hard.
+    for (let i = 0; i < MAX_LAUNCH_RETRIES; i++) {
       try {
+        // Log current network state
+        const currentProxy = proxyManager.getCurrentProxy();
+        if (currentProxy) {
+          console.log(`[Network] Telegram: Proxy Active (${currentProxy.server})`);
+        } else {
+          console.log(`[Network] Telegram: Direct Connection`);
+        }
+
+        // Attempt to launch
         await bot.launch({ dropPendingUpdates: true });
         console.log('✅ Telegram бот запущено (попередні оновлення відхилено)');
-        botLaunched = true;
+        botStarted = true;
         break;
+
       } catch (botErr) {
-        console.error(`❌ Bot Launch Error (Attempt ${i + 1}/${MAX_RETRIES}):`, botErr.message);
-        if (i < MAX_RETRIES - 1) {
-          console.log('[System] Retrying Telegram connection in 5s...');
-          await new Promise(r => setTimeout(r, 5000));
+        console.error(`❌ [Network] Telegram connection failed (Attempt ${i + 1}/${MAX_LAUNCH_RETRIES}):`, botErr.message);
+
+        // Rotate Proxy on Failure
+        console.log('[Network] Rotating proxy...');
+        const nextProxy = proxyManager.getNextProxy(); // Returns new proxy config
+
+        // Recreate Agent
+        if (nextProxy) {
+          const proxyUrl = nextProxy.server.replace('http://', 'http://' + (nextProxy.username ? `${nextProxy.username}:${nextProxy.password}@` : ''));
+          // Update agent safely
+          if (bot.telegram && bot.telegram.options) {
+            bot.telegram.options.agent = new HttpsProxyAgent(proxyUrl);
+            console.log(`[Network] Telegram agent updated to: ${nextProxy.server}`);
+          }
+        } else {
+          // If direct was planned or no proxies left (should circular rotate though)
+          if (bot.telegram && bot.telegram.options) {
+            bot.telegram.options.agent = undefined;
+            console.log(`[Network] Telegram agent switched to Direct.`);
+          }
         }
+
+        // Wait before retry
+        await new Promise(r => setTimeout(r, 5000));
       }
     }
 
-    if (!botLaunched) {
-      throw new Error('Failed to connect to Telegram after multiple attempts.');
+    if (!botStarted) {
+      console.error('❌ Failed to connect to Telegram after multiple attempts. Continuing in limited mode (Server active).');
+      // Do NOT process.exit(1) to keep HTTP server alive for HF
     }
 
     // startAllSnipers(bot); // Видаляємо або коментуємо, щоб не дублювати запуск

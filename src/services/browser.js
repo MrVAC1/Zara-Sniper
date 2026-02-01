@@ -1,4 +1,5 @@
 import { chromium } from 'playwright-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
@@ -11,9 +12,9 @@ dotenv.config();
 // Initialize require for JSON import compatibility
 const require = createRequire(import.meta.url);
 
-// Configure Stealth Plugin (Removed in favor of fingerprint-injector)
-// const stealth = StealthPlugin();
-// chromium.use(stealth);
+// Configure Stealth Plugin
+const stealth = StealthPlugin();
+chromium.use(stealth);
 
 let globalContext = null;
 let isInitializing = false;
@@ -21,10 +22,16 @@ let isInitializing = false;
 const IS_MAC = process.platform === 'darwin';
 const IS_DOCKER = process.env.IS_DOCKER === 'true' || process.env.K_SERVICE; // Detects Docker or K8s/HF
 
-// User Agent based on OS
-export const USER_AGENT = IS_MAC
-  ? 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-  : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+// Randomized User Agents
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+];
+
+export const getRandomUserAgent = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+export const USER_AGENT = getRandomUserAgent();
 
 const LAUNCH_ARGS = [
   '--no-sandbox',
@@ -101,7 +108,7 @@ function validateEnvironment() {
  * Initialize Browser with Persistent Context (Singleton)
  * @param {string} userDataDir - Path to the user data directory (REQUIRED)
  */
-export async function initBrowser(userDataDir, proxyConfig = null) {
+export async function initBrowser(userDataDir) {
   // Validate Environment first
   validateEnvironment();
 
@@ -158,9 +165,9 @@ export async function initBrowser(userDataDir, proxyConfig = null) {
     console.log(`[Profile] ${userDataDir}`);
 
     // Fallback to ProxyManager if no config provided
-    if (!proxyConfig) {
-      proxyConfig = proxyManager.getPlaywrightProxy();
-    }
+    // if (!proxyConfig) {
+    //   proxyConfig = proxyManager.getPlaywrightProxy();
+    // }
 
     // Fix for "proxy: expected object, got null"
     const launchOptions = {
@@ -172,15 +179,11 @@ export async function initBrowser(userDataDir, proxyConfig = null) {
       locale: 'uk-UA',
       timezoneId: 'Europe/Kyiv',
       channel: undefined,
-      executablePath: undefined
+      executablePath: undefined,
+      proxy: undefined // Explicitly disable proxy
     };
 
-    if (proxyConfig) {
-      console.log(`[Network] ✅ Browser using Proxy: ${proxyConfig.server}`);
-      launchOptions.proxy = proxyConfig;
-    } else {
-      console.log(`[Network] ⚠️ Direct Connection (No Proxy Available)`);
-    }
+    console.log(`[Network] Browser: Direct Connection (Host IP)`);
 
     // Force IPv4 if not already set globally (Safety net for container)
     try {
@@ -189,6 +192,22 @@ export async function initBrowser(userDataDir, proxyConfig = null) {
     } catch (e) { }
 
     globalContext = await chromium.launchPersistentContext(userDataDir, launchOptions);
+
+    // --- VERIFICATION STEP ---
+    try {
+      const page = await globalContext.newPage();
+      console.log('[Verification] Checking Browser IP...');
+      await page.goto('https://api.ipify.org', { waitUntil: 'domcontentloaded', timeout: 15000 });
+      const content = await page.content();
+      const ipMatch = content.match(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/);
+      if (ipMatch) {
+        console.log(`[Verification] Browser IP: ${ipMatch[0]} (Should match Host IP)`);
+      }
+      await page.close();
+    } catch (e) {
+      console.warn(`[Verification] Failed to check IP: ${e.message}`);
+    }
+    // -------------------------
 
     // Default Timeouts
     globalContext.setDefaultTimeout(30000);
@@ -674,15 +693,12 @@ export async function removeUIObstacles(page) {
 }
 
 async function applyStealthScripts(context) {
+  // StealthPlugin handles most overrides (webdriver, chrome runtime, etc.)
+  // We only add specific localized overrides here
   await context.addInitScript(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
     Object.defineProperty(navigator, 'languages', { get: () => ['uk-UA', 'uk', 'en-US', 'en'] });
-    window.chrome = {
-      runtime: {},
-      loadTimes: function () { },
-      csi: function () { },
-      app: {}
-    };
+
+    // Permission override for notifications
     const originalQuery = window.navigator.permissions.query;
     window.navigator.permissions.query = (parameters) => (
       parameters.name === 'notifications' ?
