@@ -8,7 +8,7 @@ import { SocksProxyAgent } from 'socks-proxy-agent';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { Telegraf } from 'telegraf';
 import { connectDatabase } from './config/database.js';
-import { initBrowser, closeBrowser, getBrowser, startLoginSession, startAutoCleanup } from './services/browser.js';
+import { initBrowser, closeBrowser, getBrowser, startLoginSession, startAutoCleanup, safeNavigate } from './services/browser.js';
 import { checkAccess } from './middleware/security.js';
 import {
   handleStart, handleAdd, handleTasks, handleView, handlePause, handleResume, handleDelete, handleHelp, handleStop,
@@ -86,6 +86,52 @@ bot.command('help', handleHelp);
 bot.command('stop', handleStop);
 bot.command('delete', (ctx) => handleDelete(ctx)); // Обробка без аргументів
 bot.command('info', handleInfo);
+
+// --- NEW SCREENSHOT COMMAND ---
+bot.command('screenshot', async (ctx) => {
+  const userId = ctx.from.id.toString();
+  const ownerId = process.env.OWNER_ID ? process.env.OWNER_ID.split(',')[0].trim() : '';
+
+  if (userId !== ownerId) {
+    return ctx.reply('⛔ Тільки власник може використовувати цю команду.');
+  }
+
+  try {
+    const browser = await getBrowser();
+    if (!browser) return ctx.reply('❌ Браузер не ініціалізовано.');
+
+    const pages = browser.pages();
+    if (pages.length === 0) return ctx.reply('❌ Немає відкритих сторінок.');
+
+    // Use the first active page (usually the main tab)
+    const page = pages[0];
+    const url = page.url();
+    const proxy = proxyManager.getCurrentProxy();
+    const proxyInfo = proxy ? `${proxy.server}` : 'Direct/Unknown';
+
+    await ctx.replyWithChatAction('upload_photo');
+
+    const timestamp = Date.now();
+    const screenshotPath = `screenshot_${timestamp}.png`;
+
+    await page.screenshot({ path: screenshotPath, fullPage: false });
+
+    await ctx.replyWithPhoto({ source: screenshotPath }, {
+      caption: `📸 **Monitor Update**\n\n🔗 **URL:** ${url}\n🛡️ **Proxy:** ${proxyInfo}`,
+      parse_mode: 'Markdown'
+    });
+
+    // Cleanup
+    fs.unlink(screenshotPath, (err) => {
+      if (err) console.error(`Failed to delete screenshot: ${err.message}`);
+    });
+
+  } catch (error) {
+    console.error(`Screenshot error: ${error.message}`);
+    ctx.reply(`❌ Помилка знімку екрана: ${error.message}`);
+  }
+});
+// ------------------------------
 
 // Обробка кнопок головного меню (Reply Keyboard)
 bot.hears('➕ Додати', handleAdd);
@@ -327,28 +373,47 @@ async function main() {
     // 4. Ensure Main Page (Always)
     // User Request: "Нехай завжди буде відкрита вкладка з головною сторінкою Zara"
     // We execute this concurrently/sequentially
+    // 4. Ensure Main Page (Always)
+    // User Request: "Нехай завжди буде відкрита вкладка з головною сторінкою Zara"
     (async () => {
-      try {
-        const pages = context.pages();
-        // Check if exactly the home page is open (ignoring query params if needed, but strict is safer for "Home")
-        // Zara often redirects /ua/uk -> /ua/uk/
-        const isHomePage = (url) => {
-          return url.includes('zara.com/ua/uk') && !url.includes('/product') && !url.includes('/search');
-        };
+      let attempts = 0;
+      const MAX_RETRIES = 3;
 
-        const hasMainPage = pages.some(p => isHomePage(p.url()));
+      while (attempts < MAX_RETRIES) {
+        try {
+          // Verify/Get Fresh Context (in case of rotation)
+          let currentContext = await getBrowser();
+          if (!currentContext) {
+            console.log('🔄 [MainTab] Context closed, re-initializing...');
+            currentContext = await initBrowser(userDataDir);
+          }
 
-        if (!hasMainPage) {
-          console.log('🌐 [MainTab] Opening persistent Zara home tab...');
-          const page = await context.newPage();
-          // Use looser timeout to not crash startup
-          await page.goto('https://www.zara.com/ua/uk/', { waitUntil: 'domcontentloaded', timeout: 60000 })
-            .catch(e => console.log('⚠️ Main page bg load warning:', e.message));
-        } else {
-          console.log('✅ [MainTab] Home page already open.');
+          const pages = currentContext.pages();
+          const isHomePage = (url) => url.includes('zara.com/ua/uk') && !url.includes('/product') && !url.includes('/search');
+          const hasMainPage = pages.some(p => isHomePage(p.url()));
+
+          if (!hasMainPage) {
+            console.log('🌐 [MainTab] Opening persistent Zara home tab...');
+            const page = await currentContext.newPage();
+
+            // Use safeNavigate with rotation handling
+            await safeNavigate(page, 'https://www.zara.com/ua/uk/', { timeout: 60000 });
+            console.log('✅ [MainTab] Home page loaded successfully.');
+          } else {
+            console.log('✅ [MainTab] Home page already open.');
+          }
+          break; // Success
+
+        } catch (e) {
+          if (e.message === 'PROXY_ROTATION_REQUIRED') {
+            console.warn(`[MainTab] 🔄 Proxy Rotation triggered during startup (Attempt ${attempts + 1}/${MAX_RETRIES}).`);
+            attempts++;
+            // Context is already closed by safeNavigate, loop will re-init
+            continue;
+          }
+          console.error('⚠️ [MainTab] Creation error:', e.message);
+          break; // Unknown error, abort to avoid infinite loop
         }
-      } catch (e) {
-        console.error('⚠️ [MainTab] Creation error:', e.message);
       }
     })();
 
