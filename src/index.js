@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
+import http from 'http'; // Keep-alive for HF Spaces
 import { Telegraf } from 'telegraf';
 import { connectDatabase } from './config/database.js';
 import { initBrowser, closeBrowser, getBrowser, startLoginSession, startAutoCleanup } from './services/browser.js';
@@ -176,6 +177,18 @@ bot.catch((err, ctx) => {
 async function main() {
   try {
     console.log('🚀 Запуск Zara Sniper Bot...');
+
+    // --- HF SPACES KEEP-ALIVE ---
+    if (process.env.PORT) {
+      http.createServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.write('Zara Sniper Bot is Running!');
+        res.end();
+      }).listen(process.env.PORT, () => {
+        console.log(`[Server] HTTP Server listening on port ${process.env.PORT}`);
+      });
+    }
+    // ----------------------------
 
     // --- PID FILE CREATION ---
     const ownerIdFull = process.env.OWNER_ID || 'default';

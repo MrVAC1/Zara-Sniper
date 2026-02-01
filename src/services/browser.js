@@ -18,6 +18,7 @@ let globalContext = null;
 let isInitializing = false;
 
 const IS_MAC = process.platform === 'darwin';
+const IS_DOCKER = process.env.IS_DOCKER === 'true' || process.env.K_SERVICE; // Detects Docker or K8s/HF
 
 // User Agent based on OS
 export const USER_AGENT = IS_MAC
@@ -36,10 +37,20 @@ const LAUNCH_ARGS = [
   '--use-fake-ui-for-media-stream'
 ];
 
+if (IS_DOCKER) {
+  LAUNCH_ARGS.push(
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--no-zygote'
+  );
+  console.log('[System] Docker environment detected. Applying optimized args.');
+}
+
 /**
  * Validates Environment for Legacy macOS
  */
 function validateEnvironment() {
+  if (IS_DOCKER) return; // Skip OS checks in Docker
   if (process.platform !== 'darwin') return;
 
   const release = os.release();
@@ -144,7 +155,7 @@ export async function initBrowser(userDataDir) {
     console.log(`[Profile] ${userDataDir}`);
 
     globalContext = await chromium.launchPersistentContext(userDataDir, {
-      headless: process.env.HEADLESS === 'true',
+      headless: IS_DOCKER ? true : process.env.HEADLESS === 'true',
       viewport: null,
       ignoreDefaultArgs: ['--enable-automation'],
       args: LAUNCH_ARGS,
