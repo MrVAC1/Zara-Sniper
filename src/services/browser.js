@@ -100,7 +100,7 @@ function validateEnvironment() {
  * Initialize Browser with Persistent Context (Singleton)
  * @param {string} userDataDir - Path to the user data directory (REQUIRED)
  */
-export async function initBrowser(userDataDir) {
+export async function initBrowser(userDataDir, proxyConfig = null) {
   // Validate Environment first
   validateEnvironment();
 
@@ -108,7 +108,9 @@ export async function initBrowser(userDataDir) {
     throw new Error('initBrowser requires userDataDir argument');
   }
 
-  // If context exists and healthy, return it
+  // If context exists and healthy, return it (Unless force-reinit is implemented elsewhere, but standard logic applies)
+  // NOTE: If we want to CHANGE proxy, we must close and re-init. This function assumes if context exists, we keep it.
+  // The caller is responsible for calling closeBrowser() if they want a NEW proxy.
   if (globalContext && isContextHealthy()) {
     return globalContext;
   }
@@ -153,12 +155,18 @@ export async function initBrowser(userDataDir) {
 
     console.log(`[Init] Launching Browser (Chromium Bundled)...`);
     console.log(`[Profile] ${userDataDir}`);
+    if (proxyConfig) {
+      console.log(`[Network] 🛡️ Using Proxy: ${proxyConfig.server}`);
+    } else {
+      console.log(`[Network] ⚠️ Direct Connection (No Proxy)`);
+    }
 
     globalContext = await chromium.launchPersistentContext(userDataDir, {
       headless: IS_DOCKER ? true : process.env.HEADLESS === 'true',
       viewport: null,
       ignoreDefaultArgs: ['--enable-automation'],
       args: LAUNCH_ARGS,
+      proxy: proxyConfig, // Inject Proxy Here
       userAgent: USER_AGENT,
       locale: 'uk-UA',
       timezoneId: 'Europe/Kyiv',

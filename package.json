@@ -23,10 +23,12 @@
     "fingerprint-generator": "^2.1.79",
     "fingerprint-injector": "^2.1.79",
     "fs": "^0.0.1-security",
+    "https-proxy-agent": "^7.0.6",
     "mongoose": "^8.0.3",
     "path": "^0.12.7",
     "playwright": "^1.58.1",
     "playwright-extra": "^4.3.6",
+    "socks-proxy-agent": "^8.0.5",
     "telegraf": "^4.15.6"
   },
   "devDependencies": {

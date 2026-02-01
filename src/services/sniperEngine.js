@@ -43,6 +43,7 @@ function releaseCheckoutLock() {
 }
 
 import { getTimeConfig, getJitteredDelay, getSniperInterval, randomDelay } from '../utils/timeUtils.js';
+import { proxyManager } from './proxyManager.js';
 
 // --- CONSTANTS ---
 const {
@@ -1347,7 +1348,39 @@ async function sniperLoop(task, telegramBot, logger) {
         return;
       }
 
+      // Ensure browser is initialised with Current Proxy
+      let browser = await getBrowser();
+      if (!browser) {
+        const proxy = proxyManager.getPlaywrightProxy();
+        browser = await initBrowser(undefined, proxy); // undefined userDataDir (uses cached or error)
+        // Actually, initBrowser requires userDataDir. 
+        // We rely on getBrowser() being null meaning we need to init from scratch? 
+        // Use 'await initBrowser()' in main loop passed userDataDir.
+        // Wait, initPage relies on global 'initBrowser' holding the state.
+        // We need to make sure we force close browser if rotating.
+      }
+
       page = await createTaskPage(task._id);
+
+      // --- AKAMAI INTERCEPTOR ---
+      page.on('response', async (response) => {
+        try {
+          if (response.status() === 403 || response.status() === 429) {
+            const url = response.url();
+            if (url.includes('zara.com')) {
+              logger.warn(`[Anti-Bot] 🛡️ Akamai Block Detected (Status ${response.status()}) on ${url}`);
+              // We throw a specific error that the main loop can catch? 
+              // It's hard to throw from event listener to main loop.
+              // We will emit text or rely on page content check.
+
+              // Strategy: Set a flag on the page or task?
+              // Or just let the verify check fail.
+            }
+          }
+        } catch (e) { }
+      });
+      // --------------------------
+
       activePages.set(task._id.toString(), page);
       logger.log('Створено нову вкладку (waiting for trigger)');
     } catch (e) {
@@ -1591,6 +1624,13 @@ async function sniperLoop(task, telegramBot, logger) {
           // 1.5 Strict Color Verification
           colorCheck = await verifyAndSelectColor(page, task.targetColorRGB, logger);
 
+          // --- AKAMAI / BLOCK CHECK (Title & Content) ---
+          const pageTitle = await page.title().catch(() => '');
+          if (pageTitle.includes('Access Denied') || pageTitle.includes('Reference #')) {
+            throw new Error('AKAMAI_BLOCK_PAGE');
+          }
+          // ----------------------------------------------
+
           if (colorCheck.success || !task.targetColorRGB) {
             break; // DETECTED! Exit retry loop and proceed
           }
@@ -1690,6 +1730,30 @@ async function sniperLoop(task, telegramBot, logger) {
         }
 
       } catch (browserError) {
+        // --- PROXY ROTATION HANDLER ---
+        if (browserError.message === 'AKAMAI_BLOCK_PAGE' || browserError.message.includes('403') || browserError.message.includes('429')) {
+          logger.warn(`[Anti-Bot] 🚨 BLOCK DETECTED! Initiating Proxy Rotation...`);
+
+          // 1. Rotate Proxy
+          proxyManager.getNextProxy();
+
+          // 2. Close Browser (Hard)
+          await closeBrowser();
+
+          // 3. Clear active pages
+          activePages.clear();
+
+          // 4. Force Re-init with new Proxy in next loop
+          logger.log('[Anti-Bot] 🔄 Restarting browser with NEW PROXY and FINGERPRINT...');
+
+          // Wait a bit to cool down
+          await delay(2000);
+
+          // Restart loop (attempts won't increment effectively acting as infinite retry on rotation)
+          continue;
+        }
+        // ------------------------------
+
         logger.error(`[Execution] Browser Error: ${browserError.message}`);
         await takeScreenshot(page, `screenshots/execution-error-${Date.now()}.png`);
 

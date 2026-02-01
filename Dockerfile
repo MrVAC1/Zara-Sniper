@@ -26,6 +26,11 @@ RUN mkdir -p /app/zara_user_profile_360527303 && \
 # Set ENV for Docker detection in app
 ENV IS_DOCKER=true
 ENV PORT=7860
+# Force IPv4 DNS resolution
+ENV NODE_OPTIONS="--dns-result-order=ipv4first"
+# Force IPv4 DNS resolution
+ENV NODE_OPTIONS="--dns-result-order=ipv4first"
+
 
 # Expose the port for HF Spaces
 EXPOSE 7860

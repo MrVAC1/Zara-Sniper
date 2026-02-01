@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import http from 'http'; // Keep-alive for HF Spaces
+import { SocksProxyAgent } from 'socks-proxy-agent';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { Telegraf } from 'telegraf';
 import { connectDatabase } from './config/database.js';
 import { initBrowser, closeBrowser, getBrowser, startLoginSession, startAutoCleanup } from './services/browser.js';
@@ -49,7 +51,19 @@ if (!BOT_TOKEN || !OWNER_ID_RAW) {
 }
 
 // Ініціалізація бота
-const bot = new Telegraf(BOT_TOKEN);
+const telegramOptions = {};
+if (process.env.PROXY_URL) {
+  const proxyUrl = process.env.PROXY_URL;
+  console.log(`[System] Using Proxy for Telegram: ${proxyUrl.startsWith('socks') ? 'SOCKS' : 'HTTPS'}`);
+
+  if (proxyUrl.startsWith('socks')) {
+    telegramOptions.agent = new SocksProxyAgent(proxyUrl);
+  } else {
+    telegramOptions.agent = new HttpsProxyAgent(proxyUrl);
+  }
+}
+
+const bot = new Telegraf(BOT_TOKEN, { telegram: telegramOptions });
 
 // Middleware безпеки
 bot.use(checkAccess);
@@ -180,6 +194,19 @@ async function main() {
   try {
     console.log('🚀 Запуск Zara Sniper Bot...');
 
+    // --- HF SPACES KEEP-ALIVE (MOVED TO TOP) ---
+    // Start server IMMEDIATELY to pass health checks while waiting for network
+    if (process.env.PORT) {
+      http.createServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.write('Zara Sniper Bot is Running!');
+        res.end();
+      }).listen(process.env.PORT, () => {
+        console.log(`[Server] HTTP Server listening on port ${process.env.PORT}`);
+      });
+    }
+    // ----------------------------
+
     // --- CONTAINER NETWORK WAIT (ROBUST) ---
     const checkInternet = async (retries = 30, delayMs = 2000) => {
       for (let i = 0; i < retries; i++) {
@@ -204,18 +231,6 @@ async function main() {
     const hasInternet = await checkInternet();
     if (!hasInternet) console.error('❌ [Network] Warning: DNS resolution failed after 60s.');
     // ------------------------------
-
-    // --- HF SPACES KEEP-ALIVE ---
-    if (process.env.PORT) {
-      http.createServer((req, res) => {
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.write('Zara Sniper Bot is Running!');
-        res.end();
-      }).listen(process.env.PORT, () => {
-        console.log(`[Server] HTTP Server listening on port ${process.env.PORT}`);
-      });
-    }
-    // ----------------------------
 
     // --- PID FILE CREATION ---
     const ownerIdFull = process.env.OWNER_ID || 'default';
