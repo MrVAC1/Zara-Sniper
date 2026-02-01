@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { createRequire } from 'module';
+import { proxyManager } from './proxyManager.js';
 
 dotenv.config();
 
@@ -155,10 +156,10 @@ export async function initBrowser(userDataDir, proxyConfig = null) {
 
     console.log(`[Init] Launching Browser (Chromium Bundled)...`);
     console.log(`[Profile] ${userDataDir}`);
-    if (proxyConfig) {
-      console.log(`[Network] 🛡️ Using Proxy: ${proxyConfig.server}`);
-    } else {
-      console.log(`[Network] ⚠️ Direct Connection (No Proxy)`);
+
+    // Fallback to ProxyManager if no config provided
+    if (!proxyConfig) {
+      proxyConfig = proxyManager.getPlaywrightProxy();
     }
 
     // Fix for "proxy: expected object, got null"
@@ -175,7 +176,10 @@ export async function initBrowser(userDataDir, proxyConfig = null) {
     };
 
     if (proxyConfig) {
+      console.log(`[Network] ✅ Browser using Proxy: ${proxyConfig.server}`);
       launchOptions.proxy = proxyConfig;
+    } else {
+      console.log(`[Network] ⚠️ Direct Connection (No Proxy Available)`);
     }
 
     // Force IPv4 if not already set globally (Safety net for container)
