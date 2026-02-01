@@ -1,0 +1,12 @@
+node_modules
+.git
+.env
+logs
+screenshots
+zara_user_profile_*
+.pid_*
+npm-debug.log
+Dockerfile
+.dockerignore
+.DS_Store
+Thumbs.db

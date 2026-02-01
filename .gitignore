@@ -1,0 +1,17 @@
+node_modules/
+.env
+*.log
+.DS_Store
+screenshots/
+.session/
+user_data/
+playwright/.cache/
+
+zara_user_profile*
+.pid_*
+src/zara_user_profile
+
+COST_ANALYSIS_UA.md
+zara_user_profile/
+
+zara_user_profile_*
