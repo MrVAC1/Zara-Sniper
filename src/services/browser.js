@@ -1,7 +1,5 @@
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import { FingerprintGenerator } from 'fingerprint-generator';
-import { FingerprintInjector } from 'fingerprint-injector';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
@@ -28,9 +26,9 @@ export const USER_AGENT = IS_MAC
   : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 const LAUNCH_ARGS = [
-  // '--no-sandbox', // Removed to reduce noise/detection
-  // '--disable-setuid-sandbox', // Removed
-  '--disable-blink-features=AutomationControlled', // Hide automation
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-blink-features=AutomationControlled',
   '--disable-infobars',
   '--start-maximized',
   '--disable-web-security',
@@ -70,13 +68,13 @@ function validateEnvironment() {
 
       // If version is newer than 1.35.x (e.g. 1.36+ or 2.x)
       if (major > 1 || (major === 1 && minor > 35)) {
-        console.error(`\n❌ [CRITICAL ERROR] Incompatible Playwright version for macOS 11 (Big Sur)`);
-        console.error(`   Current version: ${version}`);
-        console.error(`   Required version: 1.35.0`);
-        console.error(`\n👉 Please run the following commands to fix:`);
+        console.error(`\n❌ [CRITICAL ERROR] Legacy macOS (v11/Big Sur or older) detected.`);
+        console.error(`   You have Playwright v${version} installed, which is NOT compatible with your OS.`);
+        console.error(`   Newer Playwright versions require macOS 12+ due to Chromium dependencies.`);
+        console.error(`\n👉 AUTOMATIC FIX REQUIRED:`);
+        console.error(`   You must manually downgrade Playwright to continue:`);
         console.error(`   npm install playwright@1.35.0`);
-        console.error(`   npx playwright install chromium`);
-        console.error(`\n   Newer Chromium versions rely on system libraries missing in your OS.\n`);
+        console.error(`\n   After running this command, restart the bot.\n`);
         throw new Error('Playwright version incompatible with Legacy macOS');
       }
 
@@ -88,8 +86,6 @@ function validateEnvironment() {
   }
 }
 
-let lastUserDataDir = null;
-
 /**
  * Initialize Browser with Persistent Context (Singleton)
  * @param {string} userDataDir - Path to the user data directory (REQUIRED)
@@ -98,16 +94,8 @@ export async function initBrowser(userDataDir) {
   // Validate Environment first
   validateEnvironment();
 
-  // FIX: Support re-init using last known path
-  if (!userDataDir && lastUserDataDir) {
-    console.log(`[Init] Resuming with last known profile: ${lastUserDataDir}`);
-    userDataDir = lastUserDataDir;
-  } else if (userDataDir) {
-    lastUserDataDir = userDataDir;
-  }
-
   if (!userDataDir) {
-    throw new Error('initBrowser requires userDataDir argument (or previous init)');
+    throw new Error('initBrowser requires userDataDir argument');
   }
 
   // If context exists and healthy, return it
@@ -141,41 +129,27 @@ export async function initBrowser(userDataDir) {
     // Handle Singleton Lock (Windows/Chromium glitches)
     const lockFile = path.join(userDataDir, 'SingletonLock');
     if (fs.existsSync(lockFile)) {
-      try { fs.unlinkSync(lockFile); } catch (e) { }
+      try {
+        // Wait a bit
+        await new Promise(r => setTimeout(r, 1000));
+        if (fs.existsSync(lockFile)) {
+          fs.unlinkSync(lockFile);
+          console.log('🧹 SingletonLock removed forcibly.');
+        }
+      } catch (e) {
+        console.warn('⚠️ Could not remove SingletonLock:', e.message);
+      }
     }
-
-    // --- FINGERPRINT GENERATION ---
-    console.log('[Init] Generating modern browser fingerprint...');
-    const fingerprintGenerator = new FingerprintGenerator();
-    const fingerprint = fingerprintGenerator.getFingerprint({
-      browsers: ['chrome'],
-      operatingSystems: ['macos'], // Always use macOS for consistency with user request (or 'windows' if preferred)
-      devices: ['desktop'],
-      minBrowserVersion: 128
-    });
-
-    let width = 1920;
-    let height = 1080;
-
-    if (fingerprint && fingerprint.screen) {
-      width = fingerprint.screen.width || 1920;
-      height = fingerprint.screen.height || 1080;
-    } else {
-      console.warn('⚠️ [Init] Fingerprint generation incomplete (no screen). Using defaults.');
-    }
-
-    console.log(`[Init] Fingerprint generated: Chrome on macOS, Screen: ${width}x${height}`);
-    // ------------------------------
 
     console.log(`[Init] Launching Browser (Chromium Bundled)...`);
     console.log(`[Profile] ${userDataDir}`);
 
     globalContext = await chromium.launchPersistentContext(userDataDir, {
       headless: process.env.HEADLESS === 'true',
-      viewport: { width, height }, // SYNC VIEWPORT
+      viewport: null,
       ignoreDefaultArgs: ['--enable-automation'],
       args: LAUNCH_ARGS,
-      userAgent: fingerprint.navigator.userAgent, // Sync UA
+      userAgent: USER_AGENT,
       locale: 'uk-UA',
       timezoneId: 'Europe/Kyiv',
       // Strict isolation: Do not use system Chrome
@@ -183,42 +157,37 @@ export async function initBrowser(userDataDir) {
       executablePath: undefined
     });
 
-    // --- DEBUG: Context Tracking ---
-    globalContext._debugId = Math.random().toString(36).substring(7);
-    console.log(`[Debug] globalContext assigned at ${new Date().toISOString()} (ID: ${globalContext._debugId})`);
-
-    // Fallback/Debug Global Reference
-    global.sharedContext = globalContext;
-    // -------------------------------
-
-    // --- FINGERPRINT INJECTION ---
-    const fingerprintInjector = new FingerprintInjector();
-    await fingerprintInjector.attachFingerprintToPlaywright(globalContext, fingerprint);
-    console.log('[Init] Fingerprint injected successfully.');
-    // -----------------------------
-
     // Default Timeouts
     globalContext.setDefaultTimeout(30000);
     globalContext.setDefaultNavigationTimeout(60000);
 
-    console.log(`[Stealth] Using native device characteristics (Fingerprint injection disabled)`); // Legacy log, keeping for continuity but we DID inject
+    console.log(`[Stealth] Using native device characteristics (Fingerprint injection disabled)`);
 
     // Apply Stealth Scripts
     await applyStealthScripts(globalContext);
 
-    // --- GHOST PAGE CLEANER REMOVED ---
-    // It was causing 'Target closed' errors by closing task pages before they could navigate.
-    // We rely on startAutoCleanup (periodic) instead.
+    // --- GHOST PAGE CLEANER ---
+    globalContext.on('page', async (page) => {
+      try {
+        await new Promise(r => setTimeout(r, 3000));
+        if (page.isClosed()) return;
+
+        const url = page.url();
+        if (url === 'about:blank' || url === 'data:,') {
+          console.log('[Cleaner] Closed empty tab (about:blank) to save resources.');
+          await page.close().catch(() => { });
+        }
+      } catch (e) { }
+    });
     // ---------------------------
 
     globalContext.on('close', () => {
-      console.log(`🛑 [DEBUG] Browser Context CLOSED (ID: ${globalContext?._debugId || 'unknown'}) at ${new Date().toISOString()}`);
+      console.log('⚠️ Browser context closed!');
     });
 
     if (globalContext.browser()) {
-      const browser = globalContext.browser();
-      browser.on('disconnected', () => {
-        console.log(`🛑 [DEBUG] Browser DISCONNECTED from system at ${new Date().toISOString()}`);
+      globalContext.browser().on('disconnected', () => {
+        console.log('⚠️ Browser disconnected! Exiting...');
         process.exit(0);
       });
     }
@@ -227,7 +196,6 @@ export async function initBrowser(userDataDir) {
     return globalContext;
   } catch (error) {
     console.error('❌ Browser Initialization Error:', error);
-    if (globalContext) console.log(`[Debug] globalContext nulled due to error at ${new Date().toISOString()}`);
     globalContext = null;
     throw error;
   } finally {
@@ -256,23 +224,11 @@ function isContextHealthy() {
  */
 export async function getBrowser() {
   if (globalContext && isContextHealthy()) {
-    // console.log(`[Debug] getBrowser returning context ID: ${globalContext._debugId}`);
     return globalContext;
   }
-
-  // FIX: Wait a bit if browser is initializing or just slightly delayed
-  // Try 6 times x 500ms = 3 seconds
-  console.log('[getBrowser] Context missing. Waiting for initialization...');
-  for (let i = 0; i < 6; i++) {
-    if (globalContext && isContextHealthy()) {
-      console.log(`[Debug] getBrowser resolved context ID: ${globalContext._debugId} after wait`);
-      return globalContext;
-    }
-    await new Promise(r => setTimeout(r, 500));
-  }
-
-  // If we don't have a context after waiting
-  console.warn(`⚠️ getBrowser called but context is missing. Returning null. (globalContext is ${globalContext ? 'SET' : 'NULL'})`);
+  // If we don't have a context, we can't auto-init without the path.
+  // The app architecture should ensure initBrowser is called first in main().
+  console.warn('⚠️ getBrowser called but context is missing. Returning null.');
   return null;
 }
 
@@ -295,20 +251,9 @@ export function startAutoCleanup(context, activePages) {
       console.log('[Cleaner] Running periodic tab cleanup...');
       const pages = context.pages();
 
-      for (let i = 0; i < pages.length; i++) {
-        const page = pages[i];
+      for (const page of pages) {
         try {
           if (page.isClosed()) continue;
-
-          // PROTECT STARTUP TAB (Main Page)
-          // Usually the first tab (index 0) is the persistent home page.
-          if (i === 0) continue;
-
-          // SAFEGUARD: Don't close if it's the LAST tab
-          if (context.pages().length <= 1) {
-            console.warn('[Cleaner] Skip closing last tab to preserve context.');
-            continue;
-          }
 
           const url = page.url();
           const isBlank = url === 'about:blank' || url === 'data:,' || url === '';
