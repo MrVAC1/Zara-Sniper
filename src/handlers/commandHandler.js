@@ -1,6 +1,8 @@
 import SniperTask from '../models/SniperTask.js';
 import User from '../models/User.js';
 import { startSniper, stopAndCloseTask, getTaskPage } from '../services/sniperEngine.js';
+import fs from 'fs';
+import { proxyManager } from '../services/proxyManager.js';
 import { getBrowser } from '../services/browser.js';
 
 // Експортуємо клавіатуру, щоб її можна було використовувати в інших місцях
@@ -43,6 +45,7 @@ export async function handleInfo(ctx) {
     `/add - Додати нове посилання на товар\n` +
     `/tasks - Показати статус активних завдань\n` +
     `/view - Отримати скріншот (перегляд) завдання\n` +
+    `/screenshot - Скріншот активної вкладки (Global)\n` +
     `/delete - Меню видалення завдань\n` +
     `/info - Показати це повідомлення\n` +
     `/stop - Повна зупинка бота та браузера\n\n` +
@@ -321,9 +324,54 @@ export async function handleTaskScreenshot(ctx, taskId) {
       { caption: `📸 Стан завдання ${taskId}` }
     );
 
-  } catch (error) {
-    console.error('Screenshot error:', error);
     await ctx.reply(`❌ Не вдалося зробити скріншот: ${error.message}`);
+  }
+}
+
+/**
+ * Команда /screenshot - глобальний скріншот (активна вкладка)
+ */
+export async function handleGlobalScreenshot(ctx) {
+  const userId = ctx.from.id.toString();
+  const ownerId = process.env.OWNER_ID ? process.env.OWNER_ID.split(',')[0].trim() : '';
+
+  if (userId !== ownerId) {
+    return ctx.reply('⛔ Тільки власник може використовувати цю команду.');
+  }
+
+  try {
+    const browser = await getBrowser();
+    if (!browser) return ctx.reply('❌ Браузер не ініціалізовано.');
+
+    const pages = browser.pages();
+    if (pages.length === 0) return ctx.reply('❌ Немає відкритих сторінок.');
+
+    // Use the first active page (usually the main tab)
+    const page = pages[0];
+    const url = page.url();
+    const proxy = proxyManager.getCurrentProxy();
+    const proxyInfo = proxy ? `${proxy.server}` : 'Direct/Unknown';
+
+    await ctx.replyWithChatAction('upload_photo');
+
+    const timestamp = Date.now();
+    const screenshotPath = `screenshot_${timestamp}.png`;
+
+    await page.screenshot({ path: screenshotPath, fullPage: false });
+
+    await ctx.replyWithPhoto({ source: screenshotPath }, {
+      caption: `📸 **Monitor Update**\n\n🔗 **URL:** ${url}\n🛡️ **Proxy:** ${proxyInfo}`,
+      parse_mode: 'Markdown'
+    });
+
+    // Cleanup
+    fs.unlink(screenshotPath, (err) => {
+      if (err) console.error(`Failed to delete screenshot: ${err.message}`);
+    });
+
+  } catch (error) {
+    console.error(`Screenshot error: ${error.message}`);
+    ctx.reply(`❌ Помилка знімку екрана: ${error.message}`);
   }
 }
 

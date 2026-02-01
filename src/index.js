@@ -12,7 +12,7 @@ import { initBrowser, closeBrowser, getBrowser, startLoginSession, startAutoClea
 import { checkAccess } from './middleware/security.js';
 import {
   handleStart, handleAdd, handleTasks, handleView, handlePause, handleResume, handleDelete, handleHelp, handleStop,
-  handleDeleteAll, handleTaskScreenshot, handleInfo, handleDeleteMenu, handleTaskDetail
+  handleDeleteAll, handleTaskScreenshot, handleInfo, handleDeleteMenu, handleTaskDetail, handleGlobalScreenshot
 } from './handlers/commandHandler.js';
 import { handleProductUrl, handleColorSelection, handleSizeSelection } from './handlers/productHandler.js';
 // import { startAllSnipers } from './services/sniperEngine.js'; // Removed unused import
@@ -88,49 +88,7 @@ bot.command('delete', (ctx) => handleDelete(ctx)); // Обробка без ар
 bot.command('info', handleInfo);
 
 // --- NEW SCREENSHOT COMMAND ---
-bot.command('screenshot', async (ctx) => {
-  const userId = ctx.from.id.toString();
-  const ownerId = process.env.OWNER_ID ? process.env.OWNER_ID.split(',')[0].trim() : '';
-
-  if (userId !== ownerId) {
-    return ctx.reply('⛔ Тільки власник може використовувати цю команду.');
-  }
-
-  try {
-    const browser = await getBrowser();
-    if (!browser) return ctx.reply('❌ Браузер не ініціалізовано.');
-
-    const pages = browser.pages();
-    if (pages.length === 0) return ctx.reply('❌ Немає відкритих сторінок.');
-
-    // Use the first active page (usually the main tab)
-    const page = pages[0];
-    const url = page.url();
-    const proxy = proxyManager.getCurrentProxy();
-    const proxyInfo = proxy ? `${proxy.server}` : 'Direct/Unknown';
-
-    await ctx.replyWithChatAction('upload_photo');
-
-    const timestamp = Date.now();
-    const screenshotPath = `screenshot_${timestamp}.png`;
-
-    await page.screenshot({ path: screenshotPath, fullPage: false });
-
-    await ctx.replyWithPhoto({ source: screenshotPath }, {
-      caption: `📸 **Monitor Update**\n\n🔗 **URL:** ${url}\n🛡️ **Proxy:** ${proxyInfo}`,
-      parse_mode: 'Markdown'
-    });
-
-    // Cleanup
-    fs.unlink(screenshotPath, (err) => {
-      if (err) console.error(`Failed to delete screenshot: ${err.message}`);
-    });
-
-  } catch (error) {
-    console.error(`Screenshot error: ${error.message}`);
-    ctx.reply(`❌ Помилка знімку екрана: ${error.message}`);
-  }
-});
+bot.command('screenshot', handleGlobalScreenshot);
 // ------------------------------
 
 // Обробка кнопок головного меню (Reply Keyboard)
