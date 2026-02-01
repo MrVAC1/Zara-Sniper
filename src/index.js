@@ -95,6 +95,7 @@ bot.command('screenshot', handleGlobalScreenshot);
 bot.hears('➕ Додати', handleAdd);
 bot.hears('📊 Статус', handleTasks);
 bot.hears('📸 View', handleView);
+bot.hears('🖥 Screenshot', handleGlobalScreenshot);
 bot.hears('🗑 Видалити', handleDeleteMenu);
 bot.hears('ℹ️ Info', handleInfo);
 bot.hears('🛑 Стоп', handleStop);

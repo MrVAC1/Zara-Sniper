@@ -9,8 +9,9 @@ import { getBrowser } from '../services/browser.js';
 export const MAIN_MENU_KEYBOARD = {
   keyboard: [
     [{ text: '➕ Додати' }, { text: '📊 Статус' }],
-    [{ text: '📸 View' }, { text: '🗑 Видалити' }],
-    [{ text: 'ℹ️ Info' }, { text: '🛑 Стоп' }]
+    [{ text: '📸 View' }, { text: '🖥 Screenshot' }],
+    [{ text: '🗑 Видалити' }, { text: 'ℹ️ Info' }],
+    [{ text: '🛑 Стоп' }]
   ],
   resize_keyboard: true
 };
@@ -324,12 +325,17 @@ export async function handleTaskScreenshot(ctx, taskId) {
       { caption: `📸 Стан завдання ${taskId}` }
     );
 
+  } catch (error) {
+    console.error('Screenshot error:', error);
     await ctx.reply(`❌ Не вдалося зробити скріншот: ${error.message}`);
   }
 }
 
 /**
  * Команда /screenshot - глобальний скріншот (активна вкладка)
+ */
+/**
+ * Команда /screenshot - глобальний скріншот (всі активні вкладки)
  */
 export async function handleGlobalScreenshot(ctx) {
   const userId = ctx.from.id.toString();
@@ -344,34 +350,52 @@ export async function handleGlobalScreenshot(ctx) {
     if (!browser) return ctx.reply('❌ Браузер не ініціалізовано.');
 
     const pages = browser.pages();
-    if (pages.length === 0) return ctx.reply('❌ Немає відкритих сторінок.');
+    // Filter out obviously empty/system pages
+    const validPages = pages.filter(p => {
+      const url = p.url();
+      return url && url !== 'about:blank' && url !== 'data:,';
+    });
 
-    // Use the first active page (usually the main tab)
-    const page = pages[0];
-    const url = page.url();
+    if (validPages.length === 0) return ctx.reply('❌ Немає активних (не пустих) вкладок.');
+
+    await ctx.reply(`📸 Роблю знімки ${validPages.length} вкладок...`);
+    await ctx.replyWithChatAction('upload_photo');
+
     const proxy = proxyManager.getCurrentProxy();
     const proxyInfo = proxy ? `${proxy.server}` : 'Direct/Unknown';
 
-    await ctx.replyWithChatAction('upload_photo');
+    for (const [index, page] of validPages.entries()) {
+      try {
+        await page.bringToFront(); // Focus tab
+        // Small delay for rendering if we just switched
+        await new Promise(r => setTimeout(r, 500));
 
-    const timestamp = Date.now();
-    const screenshotPath = `screenshot_${timestamp}.png`;
+        const url = page.url();
+        const shortUrl = url.length > 50 ? url.substring(0, 50) + '...' : url;
+        const timestamp = Date.now();
+        const screenshotPath = `screenshot_${timestamp}_${index}.png`;
 
-    await page.screenshot({ path: screenshotPath, fullPage: false });
+        await page.screenshot({ path: screenshotPath, fullPage: false });
 
-    await ctx.replyWithPhoto({ source: screenshotPath }, {
-      caption: `📸 **Monitor Update**\n\n🔗 **URL:** ${url}\n🛡️ **Proxy:** ${proxyInfo}`,
-      parse_mode: 'Markdown'
-    });
+        await ctx.replyWithPhoto({ source: screenshotPath }, {
+          caption: `📄 **Tab ${index + 1}**\n🔗 \`${shortUrl}\`\n🛡️ **Proxy:** ${proxyInfo}`,
+          parse_mode: 'Markdown'
+        });
 
-    // Cleanup
-    fs.unlink(screenshotPath, (err) => {
-      if (err) console.error(`Failed to delete screenshot: ${err.message}`);
-    });
+        // Cleanup immediately
+        fs.unlink(screenshotPath, (err) => {
+          if (err) console.error(`Failed to delete screenshot: ${err.message}`);
+        });
+
+      } catch (innerErr) {
+        console.error(`Failed to capture tab ${index}: ${innerErr.message}`);
+        await ctx.reply(`❌ Помилка з вкладкою ${index + 1}: ${innerErr.message}`);
+      }
+    }
 
   } catch (error) {
     console.error(`Screenshot error: ${error.message}`);
-    ctx.reply(`❌ Помилка знімку екрана: ${error.message}`);
+    ctx.reply(`❌ Помилка виконання команди: ${error.message}`);
   }
 }
 
