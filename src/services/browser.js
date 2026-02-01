@@ -154,7 +154,16 @@ export async function initBrowser(userDataDir) {
       minBrowserVersion: 128
     });
 
-    const { width, height } = fingerprint.screen;
+    let width = 1920;
+    let height = 1080;
+
+    if (fingerprint && fingerprint.screen) {
+      width = fingerprint.screen.width || 1920;
+      height = fingerprint.screen.height || 1080;
+    } else {
+      console.warn('⚠️ [Init] Fingerprint generation incomplete (no screen). Using defaults.');
+    }
+
     console.log(`[Init] Fingerprint generated: Chrome on macOS, Screen: ${width}x${height}`);
     // ------------------------------
 
