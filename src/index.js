@@ -358,11 +358,14 @@ async function main() {
             // Use safeNavigate with rotation handling
             await safeNavigate(page, 'https://www.zara.com/ua/uk/', { timeout: 60000 });
 
+            console.log('✅ [MainTab] Home page loaded successfully.');
+
+            console.log('⏳ [MainTab] Waiting 5 seconds before checking store selection...');
+            await new Promise(r => setTimeout(r, 5000));
+
             // Handle "Stay in Store" and other popups
             const { removeUIObstacles } = await import('./services/browser.js');
             await removeUIObstacles(page);
-
-            console.log('✅ [MainTab] Home page loaded successfully.');
           } else {
             console.log('✅ [MainTab] Home page already open.');
           }
