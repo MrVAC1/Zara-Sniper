@@ -448,7 +448,7 @@ export async function injectRegionalCookies(context, url) {
   }
 }
 
-// Safe Navigation with Proxy Rotation
+// Safe Navigation (Direct Connection Mode)
 export async function safeNavigate(page, url, options = {}) {
   const MAX_RETRIES = 5;
   let currentUrl = url;
@@ -458,41 +458,13 @@ export async function safeNavigate(page, url, options = {}) {
       await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 30000, ...options });
       return; // Success
     } catch (error) {
-      const isTunnelError = error.message.includes('ERR_TUNNEL_CONNECTION_FAILED') ||
-        error.message.includes('ERR_PROXY_CONNECTION_FAILED');
-
-      if (isTunnelError) {
-        const failedProxy = proxyManager.getCurrentProxy();
-        console.warn(`[ProxyManager] ❌ Proxy ${failedProxy?.server} failed to tunnel. Rotating...`);
-
-        // 1. Rotate Proxy
-        proxyManager.getNextProxy();
-
-        // 2. Close Current Context
-        const context = page.context();
-        await context.close().catch(() => { });
-        globalContext = null; // Clear singleton
-
-        // 3. Re-init with NEW Proxy
-        // We need userDataDir to re-init. Assuming we can get it from context or we need to pass it?
-        // initBrowser requires userDataDir. 
-        // This helper is problematic if we don't know the userDataDir. 
-        // However, startLoginSession KNOWS it. 
-        // For generic usage, we might throw and let caller handle, OR we assume global state.
-
-        // If we are in `startLoginSession`, we control the flow. 
-        // But `safeNavigate` generally taking just `page` makes it hard to re-init properly without args.
-        // Let's THROW a specific error and handle it in the caller loop?
-        // The prompt says "Handle ... in src/services/browser.js".
-
-        // Let's implement the rotation logic specifically for startLoginSession HERE, 
-        // and maybe export a robust version if possible.
-
-        // ACTUALLY: The user asked to "Wrap page.goto in a retry loop" inside browser.js.
-        // I will rewrite startLoginSession to contain this logic internally first.
-        throw new Error('PROXY_ROTATION_REQUIRED');
+      console.warn(`[Navigate] Attempt ${attempt} failed: ${error.message}`);
+      // Simple retry without proxy rotation
+      if (attempt < MAX_RETRIES) {
+        await new Promise(r => setTimeout(r, 2000));
+      } else {
+        throw error;
       }
-      throw error; // Rethrow other errors
     }
   }
 }
@@ -519,14 +491,7 @@ export async function startLoginSession(userDataDir) {
       console.log('3. AFTER successful login — simply CLOSE the browser window.');
       console.log('--------------------------------------------------\n');
 
-      // Ensure we have a proxy (defaults to manager)
-      let proxyConfig = proxyManager.getPlaywrightProxy();
-
-      // Protocol Check (User request)
-      // Check if Webshare 10 proxies.txt content implies SOCKS? 
-      // User said: "Verify if... HTTP or SOCKS5. If SOCKS5... use socks5://"
-      // We will assume HTTP by default but if rotation happens we rely on manager.
-
+      // Direct Connection - No Protocol/Proxy Logic needed
       const launchOptions = {
         headless: false,
         viewport: null,
@@ -535,12 +500,10 @@ export async function startLoginSession(userDataDir) {
         userAgent: USER_AGENT,
         locale: 'uk-UA',
         timezoneId: 'Europe/Kyiv',
+        proxy: undefined // Enforce Direct
       };
 
-      if (proxyConfig) {
-        console.log(`[Login] Using Proxy: ${proxyConfig.server}`);
-        launchOptions.proxy = proxyConfig;
-      }
+      console.log(`[Login] Using Direct Connection (Host IP)`);
 
       const context = await chromium.launchPersistentContext(userDataDir, launchOptions);
 
@@ -556,14 +519,8 @@ export async function startLoginSession(userDataDir) {
       try {
         await page.goto('https://www.zara.com/ua/uk/identification', { waitUntil: 'domcontentloaded', timeout: 30000 });
       } catch (navError) {
-        if (navError.message.includes('ERR_TUNNEL_CONNECTION_FAILED') || navError.message.includes('ERR_PROXY_CONNECTION_FAILED')) {
-          console.warn(`[ProxyManager] ❌ Proxy ${proxyConfig?.server} failed. Rotating...`);
-          proxyManager.getNextProxy();
-          await context.close();
-          await new Promise(r => setTimeout(r, 3000)); // 3s Delay
-          continue; // RETRY SESSION from scratch with new proxy
-        }
-        // For login page, maybe fallback to home?
+        console.warn(`[Login] Navigation error: ${navError.message}. Retrying...`);
+        // Fallback to home if ID page fails
         try {
           await page.goto('https://www.zara.com/ua/uk/', { waitUntil: 'domcontentloaded' });
         } catch (e) { }
@@ -660,7 +617,8 @@ export async function removeUIObstacles(page) {
         'button:has-text("Stay on this site")',
         'button:has-text("Залишитися на цьому сайті")',
         '[class*="layout-header-links-modal"] button:first-child',
-        '[data-qa-action="stay-on-site"]'
+        '[data-qa-action="stay-on-site"]',
+        '[data-qa-action="stay-in-store"]'
       ];
       for (const selector of stayOnSiteSelectors) {
         const btn = await page.$(selector);
