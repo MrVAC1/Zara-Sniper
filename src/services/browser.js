@@ -6,7 +6,7 @@ import fs from 'fs';
 import os from 'os';
 import { createRequire } from 'module';
 import { proxyManager } from './proxyManager.js';
-import { loadSession, saveSession } from './session.js';
+import { loadSession, saveSession, saveSessionData } from './session.js';
 
 dotenv.config();
 
@@ -538,6 +538,17 @@ export async function startLoginSession(userDataDir) {
       }
       // -----------------------
 
+      // --- LIVE SESSION POLLING ---
+      // We poll the storage state while the browser is open to capture cookies before closure
+      let lastValidState = null;
+      const pollInterval = setInterval(async () => {
+        try {
+          if (context.pages().length > 0) {
+            lastValidState = await context.storageState().catch(() => null);
+          }
+        } catch (e) { }
+      }, 10000);
+
       await new Promise((resolve) => {
         context.on('close', resolve);
         context.on('page', (p) => {
@@ -547,23 +558,17 @@ export async function startLoginSession(userDataDir) {
         });
       });
 
-      // ... Cookie checks ...
-      try {
-        const cookies = await context.cookies();
-        const sessionCookie = cookies.find(c => c.name === 'Z_SESSION_ID' || c.name === 'itx-v-ev');
-        console.log(`\n✅ Session ended. Cookies retrieved: ${cookies.length}`);
-        if (sessionCookie) {
-          console.log(`📡 Active session detected: ${sessionCookie.name} (Protected)`);
-        } else {
-          console.warn('⚠️ Warning: Main session cookie not found. Ensure you logged in.');
+      clearInterval(pollInterval);
+
+      if (lastValidState) {
+        console.log(`[Login Mode] ✅ Captured session state (Size: ${JSON.stringify(lastValidState).length} chars). Saving...`);
+        try {
+          await saveSessionData(lastValidState);
+        } catch (e) {
+          console.error('[Login Mode] DB Save Error:', e.message);
         }
-
-        // SAVE SESSION TO MONGODB
-        console.log('[Login Mode] Saving session to database...');
-        await saveSession(context);
-
-      } catch (e) {
-        console.error('[Login Mode] Failed to save session:', e.message);
+      } else {
+        console.error('[Login Mode] ❌ Failed to capture any session state before close.');
       }
 
       await context.close().catch(() => { });

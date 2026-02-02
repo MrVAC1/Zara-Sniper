@@ -4,7 +4,14 @@ const sniperTaskSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
+    ref: 'User',
     required: true
+  },
+  botId: { // Scope task to specific bot instance (via token hash)
+    type: String,
+    required: true,
+    index: true,
+    default: 'global' // For backward compatibility
   },
   url: {
     type: String,

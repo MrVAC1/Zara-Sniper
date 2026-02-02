@@ -178,7 +178,19 @@ while true; do
     case $choice in
         1) install_bot ;;
         2) cd "$BOT_DIR" && git pull && rm -f package-lock.json && npm install && read -p "Оновлено. Enter..." ;;
-        3) cd "$BOT_DIR" && npm start ;;
+        3) 
+            cd "$BOT_DIR"
+            if [ ! -f ".setup_complete" ]; then
+                echo "======================================================"
+                echo "[INFO] First Run Detected!"
+                echo "[INFO] Launching Login Mode automatically..."
+                echo "======================================================"
+                npm start -- --login
+                touch ".setup_complete"
+            else
+                npm start
+            fi
+            ;;
         4) 
             if [ -f "$BOT_DIR/.env" ]; then
                 # Get OWNER_ID from .env to match the running process

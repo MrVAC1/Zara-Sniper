@@ -3,7 +3,9 @@ import path from 'path';
 import os from 'os';
 import SystemCache from '../models/SystemCache.js';
 
-const SESSION_KEY = 'global_zara_session';
+import { getBotId } from '../utils/botUtils.js';
+
+const SESSION_KEY = `zara_session_${getBotId()}`;
 // Use system temp directory or local temp to ensure write permissions
 const TEMP_DIR = os.tmpdir();
 const SESSION_FILE_PATH = path.join(TEMP_DIR, 'zara_auth.json');
@@ -38,15 +40,11 @@ export async function loadSession() {
 }
 
 /**
- * Saves the current browser context state to MongoDB.
- * @param {import('playwright').BrowserContext} context 
+ * Saves the raw session data object to MongoDB.
+ * @param {Object} storageState 
  */
-export async function saveSession(context) {
-  if (!context) return;
-
+export async function saveSessionData(storageState) {
   try {
-    const storageState = await context.storageState();
-
     await SystemCache.findOneAndUpdate(
       { _id: SESSION_KEY },
       {
@@ -56,8 +54,22 @@ export async function saveSession(context) {
       },
       { upsert: true, new: true }
     );
-
     console.log(`[Session] Successfully saved session to DB at ${new Date().toLocaleTimeString()}`);
+  } catch (error) {
+    console.error('[Session] Failed to save session data:', error.message);
+  }
+}
+
+/**
+ * Saves the current browser context state to MongoDB.
+ * @param {import('playwright').BrowserContext} context 
+ */
+export async function saveSession(context) {
+  if (!context) return;
+
+  try {
+    const storageState = await context.storageState();
+    await saveSessionData(storageState);
   } catch (error) {
     console.error('[Session] Failed to save session:', error.message);
   }

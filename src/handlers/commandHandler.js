@@ -5,6 +5,9 @@ import fs from 'fs';
 import { proxyManager } from '../services/proxyManager.js';
 import Log from '../models/Log.js';
 import { getBrowser } from '../services/browser.js';
+import { getBotId } from '../utils/botUtils.js';
+
+const CURRENT_BOT_ID = getBotId();
 
 // Експортуємо клавіатуру, щоб її можна було використовувати в інших місцях
 export const MAIN_MENU_KEYBOARD = {
@@ -92,7 +95,8 @@ export async function handleTasks(ctx, page = 1, statusFilter = null) {
   }
 
   // Get unique statuses for this user
-  const uniqueStatuses = await SniperTask.distinct('status', { userId: user._id });
+  // Get unique statuses for this BOT (Shared)
+  const uniqueStatuses = await SniperTask.distinct('status', { botId: CURRENT_BOT_ID });
 
   // Logical Menu Fork: 
   // If no filter selected AND multiple statuses exist -> show Category Menu
@@ -127,7 +131,10 @@ export async function handleTasks(ctx, page = 1, statusFilter = null) {
   }
 
   // Build query
-  const query = { userId: user._id };
+  // Shared Workspace Logic:
+  // We use current bot's ID to filter tasks, so all admins of THIS bot see the same tasks.
+  const query = { botId: CURRENT_BOT_ID };
+
   if (statusFilter && statusFilter !== 'all') {
     query.status = statusFilter;
   }
@@ -286,7 +293,8 @@ export async function handleView(ctx) {
 
   if (!user) return ctx.reply('❌ Користувача не знайдено');
 
-  const tasks = await SniperTask.find({ userId: user._id, status: 'hunting' });
+  // Shared view: show hunting tasks for this bot
+  const tasks = await SniperTask.find({ botId: CURRENT_BOT_ID, status: 'hunting' });
 
   if (tasks.length === 0) {
     return ctx.reply('📭 Немає активних завдань для перегляду.');
@@ -504,7 +512,8 @@ export async function handleDelete(ctx, taskId) {
   await stopAndCloseTask(taskId);
 
   // STRICT OWNERSHIP CHECK + DELETE
-  const task = await SniperTask.findOneAndDelete({ _id: taskId, userId: user._id });
+  // Delete based on ID and BOT SCOPE (anyone with access to this bot can delete)
+  const task = await SniperTask.findOneAndDelete({ _id: taskId, botId: CURRENT_BOT_ID });
 
   const text = task
     ? `🗑 Завдання *${task.productName}* (${task.selectedSize?.name}) видалено.`
@@ -559,9 +568,9 @@ export async function handleStop(ctx) {
   const user = await User.findOne({ telegramId: userId });
   if (!user) return ctx.reply('❌ Користувача не знайдено');
 
-  // SOFT STOP: Find all active tasks for THIS USER and mark stopped
+  // SOFT STOP: Find all active tasks for THIS BOT
   const tasks = await SniperTask.find({
-    userId: user._id,
+    botId: CURRENT_BOT_ID,
     status: { $in: ['hunting', 'processing', 'paused', 'monitoring'] }
   });
 

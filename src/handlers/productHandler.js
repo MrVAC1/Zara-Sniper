@@ -5,6 +5,9 @@ import { getBotInstance } from '../utils/botInstance.js';
 import { startSniper } from '../services/sniperEngine.js';
 import { initBrowser } from '../services/browser.js';
 import { checkAvailability, getSizingInfo, STORE_IDS } from '../services/zaraApi.js';
+import { getBotId } from '../utils/botUtils.js';
+
+const CURRENT_BOT_ID = getBotId();
 
 // Тимчасове сховище для стану вибору
 const userSelectionState = new Map();
@@ -695,9 +698,9 @@ export async function handleSizeSelection(ctx, colorIndex, sizeIndex) {
 
   // NEW: Check Unique Constraint (Phase B Requirement)
   // "Unique Constraint: Заборони створення ідентичних завдань для одного SKU на одного користувача."
-  // Check if a task with the same URL and Size is ACTIVE
+  // Check if a task with the same URL and Size is ACTIVE for this BOT
   const existingTask = await SniperTask.findOne({
-    userId: user._id,
+    botId: CURRENT_BOT_ID,
     url: state.url, // Check by URL
     'selectedColor.name': selectedColor.name, // NEW: Check by Color Name
     'selectedSize.name': selectedSize.name, // Check by Size Name
@@ -731,6 +734,7 @@ export async function handleSizeSelection(ctx, colorIndex, sizeIndex) {
   try {
     const task = await SniperTask.create({
       userId: user._id,
+      botId: CURRENT_BOT_ID, // Use Bot Scope
       url: state.url,
       productName: state.productName,
       productId: state.productId, // Save productId

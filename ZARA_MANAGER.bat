@@ -249,7 +249,16 @@ goto MENU
 :START
 cls
 cd /d "%BOT_DIR%"
-start "ZARA_RUN" npm run start
+if not exist ".setup_complete" (
+    echo ======================================================
+    echo [INFO] Виявлено перший запуск!
+    echo [INFO] Автоматичний запуск режиму ВХОДУ (Login Mode)...
+    echo ======================================================
+    echo. > ".setup_complete"
+    start "ZARA_LOGIN" npm start -- --login
+) else (
+    start "ZARA_RUN" npm run start
+)
 goto MENU
 
 :STOP
