@@ -16,3 +16,6 @@ zara_user_profile/
 
 zara_user_profile_*/
 error_debug.jpg
+brightdata_proxy/
+brightdata_proxy.crt
+*.exe

@@ -33,6 +33,16 @@ const { GOTO_TIMEOUT } = getTimeConfig();
 
 dotenv.config();
 
+// --- SSL CERTIFICATE SETUP ---
+const sslCertPath = path.join(process.cwd(), 'brightdata_proxy.crt');
+if (fs.existsSync(sslCertPath)) {
+  process.env.NODE_EXTRA_CA_CERTS = sslCertPath;
+  console.log(`[System] 🛡️ Loaded custom SSL certificate: ${sslCertPath}`);
+} else {
+  console.warn(`[System] ⚠️ SSL certificate not found at ${sslCertPath}`);
+}
+// -----------------------------
+
 // --- GLOBAL LOGGING PREFIX ---
 const ownerLogId = process.env.OWNER_ID ? process.env.OWNER_ID.split(',')[0].trim() : 'System';
 const logPrefix = `[Owner: ${ownerLogId}]`;

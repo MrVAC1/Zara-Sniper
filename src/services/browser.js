@@ -48,7 +48,8 @@ const LAUNCH_ARGS = [
   '--disable-web-security',
   '--disable-features=IsolateOrigins,site-per-process',
   '--disable-site-isolation-trials',
-  '--use-fake-ui-for-media-stream'
+  '--use-fake-ui-for-media-stream',
+  '--ignore-certificate-errors' // Added per user request
 ];
 
 if (IS_DOCKER) {
@@ -188,16 +189,16 @@ export async function initBrowser(userDataDir) {
     const launchOptions = {
       headless: IS_DOCKER ? true : process.env.HEADLESS === 'true',
       viewport: null,
+      ignoreHTTPSErrors: true, // Allow proxy SSL certificates
       ignoreDefaultArgs: ['--enable-automation'],
       args: LAUNCH_ARGS,
       userAgent: USER_AGENT,
       locale: 'uk-UA',
       timezoneId: 'Europe/Kyiv',
       channel: undefined,
-      channel: undefined,
       executablePath: undefined,
       proxy: (process.env.BRIGHTDATA_USER && process.env.BRIGHTDATA_PASSWORD) ? {
-        server: process.env.BRIGHTDATA_PROXY_URL || 'http://brd.superproxy.io:22225',
+        server: process.env.BRIGHTDATA_PROXY_URL || 'http://brd.superproxy.io:33335',
         username: process.env.BRIGHTDATA_USER,
         password: process.env.BRIGHTDATA_PASSWORD
       } : undefined,
@@ -232,17 +233,17 @@ export async function initBrowser(userDataDir) {
 
     globalContext = await chromium.launchPersistentContext(userDataDir, launchOptions);
 
-    // --- COST OPTIMIZATION: Resource Blocking ---
-    // Abort requests for heavy resources to save Bright Data bandwidth
-    await globalContext.route('**/*', route => {
-      const type = route.request().resourceType();
-      if (['image', 'media', 'font', 'stylesheet'].includes(type)) {
-        // console.log(`[Optim] Blocked resource: ${type}`);
-        return route.abort();
-      }
-      return route.continue();
-    });
-    console.log('[Init] 📉 Resource Blocker Activated (Images, Media, Fonts, Stylesheets)');
+    // --- COST OPTIMIZATION: Resource Blocking (DISABLED via REQUEST) ---
+    // await globalContext.route('**/*', route => {
+    //   const type = route.request().resourceType();
+    //   if (['image', 'media', 'font', 'stylesheet'].includes(type)) {
+    //     // console.log(`[Optim] Blocked resource: ${type}`);
+    //     return route.abort();
+    //   }
+    //   return route.continue();
+    // });
+    // console.log('[Init] 📉 Resource Blocker Activated (Images, Media, Fonts, Stylesheets)');
+    console.log('[Init] 🎨 Resource Blocker DISABLED - Full Site Loading Enabled');
 
     console.groupEnd();
 
