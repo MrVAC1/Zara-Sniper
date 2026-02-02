@@ -16,6 +16,7 @@ import {
   handleLogs
 } from './handlers/commandHandler.js';
 import { handleProductUrl, handleColorSelection, handleSizeSelection } from './handlers/productHandler.js';
+import { handleLogin } from './handlers/authHandler.js';
 // import { startAllSnipers } from './services/sniperEngine.js'; // Removed unused import
 import { initializeActiveTasks } from './services/taskQueue.js';
 import { activePages } from './services/sniperEngine.js';
@@ -96,6 +97,7 @@ bot.command('screenshot', handleGlobalScreenshot);
 
 // --- LOGS COMMAND ---
 bot.command('logs', handleLogs);
+bot.command('login', handleLogin);
 // --------------------
 
 // Обробка кнопок головного меню (Reply Keyboard)
