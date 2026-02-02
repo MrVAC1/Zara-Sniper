@@ -20,14 +20,23 @@ export async function loadSession() {
     const sessionDoc = await SystemCache.findById(SESSION_KEY);
 
     if (sessionDoc && sessionDoc.data) {
+      const data = sessionDoc.data;
+
+      // JSON Integrity Check
+      if (!data.cookies || !Array.isArray(data.cookies) || data.cookies.length === 0) {
+        console.warn(`[Session] ⚠️ Corrupted or empty session data in DB! (Cookies: ${data.cookies?.length || 0})`);
+        return null;
+      }
+
       console.log(`[Session] Found persisted session (updated: ${sessionDoc.updatedAt})`);
 
       // Ensure data is stringified correctly for Playwright
-      // User Request: "JSON.stringify(data, null, 2)"
-      const sessionContent = JSON.stringify(sessionDoc.data, null, 2);
-
+      const sessionContent = JSON.stringify(data, null, 2);
       fs.writeFileSync(SESSION_FILE_PATH, sessionContent);
-      console.log(`[Session] Wrote session to temp file: ${SESSION_FILE_PATH}`);
+
+      const stats = fs.statSync(SESSION_FILE_PATH);
+      const sizeKB = Math.round(stats.size / 1024);
+      console.log(`[Session] Wrote session to temp file: ${SESSION_FILE_PATH} (Size: ${sizeKB} KB)`);
 
       return SESSION_FILE_PATH;
     } else {

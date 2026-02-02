@@ -52,10 +52,10 @@ export async function reportError(page, error, contextMsg = '') {
   let screenshotBuffer = null;
   if (page && !page.isClosed()) {
     try {
-      // User Request: "JPEG format, quality 85%"
+      // User Request: "JPEG format, quality 70%"
       screenshotBuffer = await page.screenshot({
         type: 'jpeg',
-        quality: 85,
+        quality: 70,
         fullPage: false
       });
     } catch (shotErr) {

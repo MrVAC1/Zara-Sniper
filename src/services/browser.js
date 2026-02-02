@@ -7,6 +7,7 @@ import os from 'os';
 import { createRequire } from 'module';
 import { proxyManager } from './proxyManager.js';
 import { loadSession, saveSession, saveSessionData } from './session.js';
+import { reportError } from './logService.js';
 
 dotenv.config();
 
@@ -195,6 +196,18 @@ export async function initBrowser(userDataDir) {
       storageState: sessionFilePath || undefined // Inject loaded session
     };
 
+    // Force Import: Clean user profile to force Playwright to use `storageState`
+    if (sessionFilePath && fs.existsSync(userDataDir)) {
+      try {
+        console.log('[Session] 🧹 Force-cleaning User Data directory for fresh session import...');
+        fs.rmSync(userDataDir, { recursive: true, force: true });
+        // fs.mkdirSync(userDataDir, { recursive: true }); // Playwright will create it
+      } catch (e) {
+        console.warn('[Session] Cleanup warning:', e.message);
+      }
+    }
+
+    console.group('[Browser Init]');
     console.log(`[Network] Browser: Direct Connection (Host IP)`);
 
     // Force IPv4 if not already set globally (Safety net for container)
@@ -204,19 +217,53 @@ export async function initBrowser(userDataDir) {
     } catch (e) { }
 
     globalContext = await chromium.launchPersistentContext(userDataDir, launchOptions);
+    console.groupEnd();
 
-    // DEBUG: Verify Session Injection
+    // Default Timeouts
+    globalContext.setDefaultTimeout(30000);
+    globalContext.setDefaultNavigationTimeout(60000);
+
+    // --- LAZY COOKIE VERIFICATION ---
     try {
+      const page = await globalContext.newPage();
+
+      // Wake up context
+      console.log('🌐 [Session] Warming up context: Navigating to Zara...');
+      try {
+        await page.goto('https://www.zara.com/ua/uk/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await new Promise(r => setTimeout(r, 2000)); // Wait for hydration
+      } catch (navErr) {
+        console.warn(`[Session] Warm-up navigation failed: ${navErr.message}`);
+      }
+
+      // Check cookies
       const cookies = await globalContext.cookies();
       const sessionCookie = cookies.find(c => c.name === 'Z_SESSION_ID' || c.name === 'itx-v-ev');
-      console.log(`[Session] Browser Cookies Loaded: ${cookies.length}`);
-      if (sessionCookie) {
-        console.log(`[Session] ✅ Active Session Cookie Found: ${sessionCookie.name}`);
-      } else {
-        console.log(`[Session] ⚠️ NO Active Session Cookie found after launch!`);
+
+      console.group('[Session Verification]');
+      console.log(`🍪 Total Cookies: ${cookies.length}`);
+
+      if (cookies.length > 0) {
+        const sample = cookies.slice(0, 3).map(c => c.name).join(', ');
+        console.log(`🍪 Sample: ${sample}...`);
       }
+
+      if (sessionCookie) {
+        console.log(`✅ Active Session: ${sessionCookie.name} (Value: ${sessionCookie.value.substring(0, 10)}...)`);
+      } else {
+        console.error(`⚠️ NO Active Session Cookie found!`);
+
+        // Critical Failure Report
+        const proxyIP = 'Direct/Host'; // Or fetch from checker
+        const userAgent = await page.evaluate(() => navigator.userAgent);
+
+        await reportError(page, new Error(`Session Restore Failed: 0 Cookies loaded. UA: ${userAgent}`), `Session Init (IP: ${proxyIP})`);
+      }
+      console.groupEnd();
+
+      await page.close();
     } catch (e) {
-      console.warn('[Session] Cookie verification failed:', e.message);
+      console.warn('[Session] Verification error:', e.message);
     }
 
     // --- VERIFICATION STEP ---
