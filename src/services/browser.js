@@ -173,7 +173,8 @@ export async function initBrowser(userDataDir) {
     // Load session from MongoDB (if exists) -> temp file
     const sessionFilePath = await loadSession();
     if (sessionFilePath) {
-      console.log(`[Session] Restoring session from: ${sessionFilePath}`);
+      const stats = fs.statSync(sessionFilePath);
+      console.log(`[Session] Restoring session from: ${sessionFilePath} (Size: ${stats.size} bytes)`);
     } else {
       console.log(`[Session] No saved session found. Starting fresh.`);
     }
@@ -203,6 +204,20 @@ export async function initBrowser(userDataDir) {
     } catch (e) { }
 
     globalContext = await chromium.launchPersistentContext(userDataDir, launchOptions);
+
+    // DEBUG: Verify Session Injection
+    try {
+      const cookies = await globalContext.cookies();
+      const sessionCookie = cookies.find(c => c.name === 'Z_SESSION_ID' || c.name === 'itx-v-ev');
+      console.log(`[Session] Browser Cookies Loaded: ${cookies.length}`);
+      if (sessionCookie) {
+        console.log(`[Session] ✅ Active Session Cookie Found: ${sessionCookie.name}`);
+      } else {
+        console.log(`[Session] ⚠️ NO Active Session Cookie found after launch!`);
+      }
+    } catch (e) {
+      console.warn('[Session] Cookie verification failed:', e.message);
+    }
 
     // --- VERIFICATION STEP ---
     try {
