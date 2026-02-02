@@ -196,9 +196,19 @@ export async function initBrowser(userDataDir) {
       channel: undefined,
       channel: undefined,
       executablePath: undefined,
-      proxy: undefined, // Explicitly disable proxy
+      proxy: (process.env.BRIGHTDATA_USER && process.env.BRIGHTDATA_PASSWORD) ? {
+        server: process.env.BRIGHTDATA_PROXY_URL || 'http://brd.superproxy.io:22225',
+        username: process.env.BRIGHTDATA_USER,
+        password: process.env.BRIGHTDATA_PASSWORD
+      } : undefined,
       storageState: sessionFilePath || undefined // Inject loaded session
     };
+
+    if (launchOptions.proxy) {
+      console.log(`[Init] 🛡️ Configuring Bright Data Proxy: ${launchOptions.proxy.server}`);
+    } else {
+      console.log(`[Init] ⚠️ No Bright Data credentials found. Running Direct/Host connection.`);
+    }
 
     // Force Import: Clean user profile to force Playwright to use `storageState`
     if (sessionFilePath && fs.existsSync(userDataDir)) {
@@ -221,6 +231,19 @@ export async function initBrowser(userDataDir) {
     } catch (e) { }
 
     globalContext = await chromium.launchPersistentContext(userDataDir, launchOptions);
+
+    // --- COST OPTIMIZATION: Resource Blocking ---
+    // Abort requests for heavy resources to save Bright Data bandwidth
+    await globalContext.route('**/*', route => {
+      const type = route.request().resourceType();
+      if (['image', 'media', 'font', 'stylesheet'].includes(type)) {
+        // console.log(`[Optim] Blocked resource: ${type}`);
+        return route.abort();
+      }
+      return route.continue();
+    });
+    console.log('[Init] 📉 Resource Blocker Activated (Images, Media, Fonts, Stylesheets)');
+
     console.groupEnd();
 
     // Default Timeouts
@@ -273,12 +296,24 @@ export async function initBrowser(userDataDir) {
     // --- VERIFICATION STEP ---
     try {
       const page = await globalContext.newPage();
-      console.log('[Verification] Checking Browser IP...');
-      await page.goto('https://api.ipify.org', { waitUntil: 'domcontentloaded', timeout: 15000 });
+      console.log('[Verification] Checking Browser IP via Bright Data...');
+
+      try {
+        await page.goto('https://api.ipify.org', { waitUntil: 'domcontentloaded', timeout: 15000 });
+      } catch (e) {
+        if (e.message.includes('407')) {
+          console.error('❌ [CRITICAL] Proxy Authentication Failed (407). Check BRIGHTDATA_USER / BRIGHTDATA_PASSWORD.');
+          throw e;
+        }
+        throw e;
+      }
+
       const content = await page.content();
       const ipMatch = content.match(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/);
       if (ipMatch) {
-        console.log(`[Verification] Browser IP: ${ipMatch[0]} (Should match Host IP)`);
+        console.log(`[Verification] 🌍 Browser IP (Bright Data): ${ipMatch[0]}`);
+      } else {
+        console.warn('[Verification] ⚠️ Could not determine IP.');
       }
       await page.close();
     } catch (e) {
