@@ -3,6 +3,7 @@ import User from '../models/User.js';
 import { startSniper, stopAndCloseTask, getTaskPage } from '../services/sniperEngine.js';
 import fs from 'fs';
 import { proxyManager } from '../services/proxyManager.js';
+import Log from '../models/Log.js';
 import { getBrowser } from '../services/browser.js';
 
 // Експортуємо клавіатуру, щоб її можна було використовувати в інших місцях
@@ -590,3 +591,45 @@ export async function handleHelp(ctx) {
   await handleStart(ctx); // Показуємо меню замість тексту
 }
 
+/**
+ * Команда /logs - перегляд останніх логів
+ */
+export async function handleLogs(ctx) {
+  const userId = ctx.from.id.toString();
+  const ownerId = process.env.OWNER_ID ? process.env.OWNER_ID.split(',')[0].trim() : '';
+
+  // Ensure only owner can see system logs
+  if (userId !== ownerId) {
+    return ctx.reply('⛔ Бот працює в Shared Mode. Логи доступні лише адміністратору.');
+  }
+
+  try {
+    const logs = await Log.find()
+      .sort({ timestamp: -1 })
+      .limit(15);
+
+    if (logs.length === 0) {
+      return ctx.reply('📭 Логів поки немає.');
+    }
+
+    let message = '📜 *System Logs (Last 15)*\n\n';
+
+    logs.reverse().forEach(log => {
+      let emoji = '⚪';
+      if (log.level === 'ERROR') emoji = '🔴';
+      else if (log.level === 'WARN') emoji = '🟡';
+      else if (log.level === 'INFO') emoji = '🟢';
+
+      const time = new Date(log.timestamp).toLocaleTimeString('uk-UA');
+      // Truncate message if too long
+      const safeMsg = log.message.length > 50 ? log.message.substring(0, 50) + '...' : log.message;
+
+      message += `${emoji} \`[${time}]\` ${safeMsg}\n`;
+    });
+
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+  } catch (error) {
+    console.error('Logs command error:', error);
+    ctx.reply('❌ Не вдалося отримати логи.');
+  }
+}

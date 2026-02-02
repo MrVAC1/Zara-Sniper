@@ -12,7 +12,8 @@ import { initBrowser, closeBrowser, getBrowser, startLoginSession, startAutoClea
 import { checkAccess } from './middleware/security.js';
 import {
   handleStart, handleAdd, handleTasks, handleView, handlePause, handleResume, handleDelete, handleHelp, handleStop,
-  handleDeleteAll, handleTaskScreenshot, handleInfo, handleDeleteMenu, handleTaskDetail, handleGlobalScreenshot
+  handleDeleteAll, handleTaskScreenshot, handleInfo, handleDeleteMenu, handleTaskDetail, handleGlobalScreenshot,
+  handleLogs
 } from './handlers/commandHandler.js';
 import { handleProductUrl, handleColorSelection, handleSizeSelection } from './handlers/productHandler.js';
 // import { startAllSnipers } from './services/sniperEngine.js'; // Removed unused import
@@ -24,6 +25,8 @@ import { createSystemTray } from './services/systemTray.js';
 import { setupErrorHandling } from './services/errorHandler.js';
 import { setBotInstance } from './utils/botInstance.js';
 import { getTimeConfig } from './utils/timeUtils.js';
+import { setLogServiceBot } from './services/logService.js';
+import { startSessionSync, saveSession } from './services/session.js';
 
 const { GOTO_TIMEOUT } = getTimeConfig();
 
@@ -90,6 +93,10 @@ bot.command('info', handleInfo);
 // --- NEW SCREENSHOT COMMAND ---
 bot.command('screenshot', handleGlobalScreenshot);
 // ------------------------------
+
+// --- LOGS COMMAND ---
+bot.command('logs', handleLogs);
+// --------------------
 
 // Обробка кнопок головного меню (Reply Keyboard)
 bot.hears('➕ Додати', handleAdd);
@@ -304,6 +311,9 @@ async function main() {
     console.log('🔄 Ініціалізація браузера...');
     const context = await initBrowser(userDataDir);
 
+    // Initial Session Sync Start
+    startSessionSync(context);
+
     // FIX: Darwin 20 Stability Pause
     console.log('⏳ Waiting 5s for browser stabilization (Legacy macOS fix)...');
     await new Promise(resolve => setTimeout(resolve, 5000));
@@ -386,6 +396,7 @@ async function main() {
 
     // Збереження екземпляру бота
     setBotInstance(bot);
+    setLogServiceBot(bot); // Initialize Log Service with Bot
 
     // 5. Bot Launch (Robust Retry Mechanism with Proxy Rotation)
     // Запуск бота з очищенням черги очікуючих оновлень
@@ -507,6 +518,18 @@ async function shutdown(signal) {
         console.warn(`[System] Failed to remove PID file: ${e.message}`);
       }
     }
+
+    // Force save session before exit
+    try {
+      const context = await getBrowser();
+      if (context) {
+        console.log('[Shutdown] Saving final session...');
+        await saveSession(context);
+      }
+    } catch (e) {
+      console.warn('[Shutdown] Failed to save session:', e.message);
+    }
+    // -------------------
     // -------------------
 
     await import('./config/database.js').then(m => m.disconnectDatabase());

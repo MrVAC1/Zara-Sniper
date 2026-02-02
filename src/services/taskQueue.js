@@ -152,20 +152,12 @@ export async function initializeActiveTasks(context, telegramBot) {
   try {
     console.log('🔄 [Bootstrap] Starting Cold Start restoration...');
 
-    // 1. Пошук активних завдань для поточного власника
-    const ownerIds = process.env.OWNER_ID ? process.env.OWNER_ID.split(',').map(s => s.trim()) : [];
-    const users = await User.find({ telegramId: { $in: ownerIds } });
-    const userIds = users.map(u => u._id);
-
-    // Якщо користувачів не знайдено, нічого не відновлюємо (безпека)
-    if (userIds.length === 0) {
-      console.log('⚠️ [Bootstrap] No users found for current OWNER_ID configuration. Skipping restoration.');
-      return;
-    }
+    // 1. Пошук активних завдань (Глобальний режим - ігноруємо прив'язку до власника для відновлення)
+    // Ми хочемо відновити ВСІ завдання, що є в базі
+    console.log('[Bootstrap] Fetching all active tasks globally...');
 
     const tasks = await SniperTask.find({
-      status: { $in: ['SEARCHING', 'HUNTING', 'PENDING', 'MONITORING', 'hunting', 'processing'] },
-      userId: { $in: userIds }
+      status: { $in: ['SEARCHING', 'HUNTING', 'PENDING', 'MONITORING', 'hunting', 'processing'] }
     });
 
     if (tasks.length === 0) {

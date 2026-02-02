@@ -6,6 +6,7 @@ import fs from 'fs';
 import os from 'os';
 import { createRequire } from 'module';
 import { proxyManager } from './proxyManager.js';
+import { loadSession } from './session.js';
 
 dotenv.config();
 
@@ -169,6 +170,14 @@ export async function initBrowser(userDataDir) {
     //   proxyConfig = proxyManager.getPlaywrightProxy();
     // }
 
+    // Load session from MongoDB (if exists) -> temp file
+    const sessionFilePath = await loadSession();
+    if (sessionFilePath) {
+      console.log(`[Session] Restoring session from: ${sessionFilePath}`);
+    } else {
+      console.log(`[Session] No saved session found. Starting fresh.`);
+    }
+
     // Fix for "proxy: expected object, got null"
     const launchOptions = {
       headless: IS_DOCKER ? true : process.env.HEADLESS === 'true',
@@ -179,8 +188,10 @@ export async function initBrowser(userDataDir) {
       locale: 'uk-UA',
       timezoneId: 'Europe/Kyiv',
       channel: undefined,
+      channel: undefined,
       executablePath: undefined,
-      proxy: undefined // Explicitly disable proxy
+      proxy: undefined, // Explicitly disable proxy
+      storageState: sessionFilePath || undefined // Inject loaded session
     };
 
     console.log(`[Network] Browser: Direct Connection (Host IP)`);

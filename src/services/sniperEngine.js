@@ -9,6 +9,7 @@ import { checkAvailability, STORE_IDS } from './zaraApi.js';
 import { refreshSession } from './tokenManager.js';
 import { triggerIpGuard, isSystemPaused } from './healthGuard.js';
 import { parseProductOptions } from './zaraParser.js';
+import { reportError } from './logService.js';
 
 dotenv.config();
 
@@ -682,10 +683,8 @@ export async function fastCheckout(page, user, logger) {
     }
 
     if (!checkoutFound) {
-      logger.error('[FastCheckout] Critical Error: No checkout buttons found.');
-      const errorPath = `screenshots/fast-checkout-error-${Date.now()}.png`;
-      await page.screenshot({ path: errorPath }).catch(() => { });
-      // Note: userId/telegramBot might be missing in fastCheckout simplified context if called from certain places
+      const msg = '[FastCheckout] Critical Error: No checkout buttons found.';
+      await reportError(page, new Error(msg), 'FastCheckout');
       throw new Error('Checkout Button Missing in FastCheckout');
     }
 
@@ -713,16 +712,7 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
 
   if (telegramBot && finalChatId) {
     checkoutTimeout = setTimeout(async () => {
-      logger.error('[Checkout] ⏳ Timeout: Checkout took > 45s!');
-      const errorPath = `screenshots/timeout-${taskId}-${Date.now()}.png`;
-      try {
-        if (page && !page.isClosed()) await page.screenshot({ path: errorPath, fullPage: true });
-        const botApi = telegramBot.telegram || telegramBot;
-        await botApi.sendPhoto(finalChatId, { source: errorPath }, {
-          caption: '⏰ *Помилка тайм-ауту (45с)!*\nПроцес покупки затягнувся занадто довго.',
-          parse_mode: 'Markdown'
-        });
-      } catch (e) { logger.error(`Timeout Handler Error: ${e.message}`); }
+      await reportError(page, new Error('Checkout Timeout (>45s)'), 'Checkout Watchdog');
     }, CHECKOUT_HARD_TIMEOUT);
   }
 
@@ -954,16 +944,7 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
         }
 
         if (i === 1) { // Critical failure on 2nd step
-          const errorPath = `screenshots/checkout-error-${taskId}-${Date.now()}.png`;
-          await page.screenshot({ path: errorPath, fullPage: true }).catch(() => { });
-
-          if (telegramBot && finalChatId) {
-            const botApi = telegramBot.telegram || telegramBot;
-            await botApi.sendPhoto(finalChatId, { source: errorPath }, {
-              caption: '❌ *Оформлення перервано!*\nКнопки пропущено або зникли. Перевірте акаунт.',
-              parse_mode: 'Markdown'
-            }).catch(() => { });
-          }
+          await reportError(page, new Error('Checkout Flow Interrupted: Buttons Missing'), 'Checkout Step 2');
 
           await SniperTask.findByIdAndUpdate(taskId, { status: 'hunting' });
           if (page) await page.close().catch(() => { });
@@ -1145,17 +1126,7 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
 
     if (cartCount > 1) {
       logger.warn(`⚠️ [Guard] У кошику виявлено ${cartCount} товарів! Оплату скасовано.`);
-
-      const screenshotPath = `screenshots/cart-guard-${taskId}-${Date.now()}.png`;
-      await takeScreenshot(page, screenshotPath);
-
-      if (telegramBot && finalChatId) {
-        const client = telegramBot.telegram || telegramBot;
-        await client.sendPhoto(finalChatId, { source: screenshotPath }, {
-          caption: `⚠️ <b>УВАГА:</b> У кошику виявлено <b>${cartCount}</b> товарів!\n⛔ Автоматичну оплату скасовано для безпеки.\n👉 Перевірте кошик вручну.`,
-          parse_mode: 'HTML'
-        }).catch(e => logger.error(`Telegram notify error: ${e.message}`));
-      }
+      await reportError(page, new Error(`Cart Guard: Found ${cartCount} items`), 'Cart Quantity Guard');
 
       await SniperTask.findByIdAndUpdate(taskId, { status: 'paused' });
       return;
