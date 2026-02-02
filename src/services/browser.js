@@ -6,7 +6,7 @@ import fs from 'fs';
 import os from 'os';
 import { createRequire } from 'module';
 import { proxyManager } from './proxyManager.js';
-import { loadSession } from './session.js';
+import { loadSession, saveSession } from './session.js';
 
 dotenv.config();
 
@@ -557,7 +557,14 @@ export async function startLoginSession(userDataDir) {
         } else {
           console.warn('⚠️ Warning: Main session cookie not found. Ensure you logged in.');
         }
-      } catch (e) { }
+
+        // SAVE SESSION TO MONGODB
+        console.log('[Login Mode] Saving session to database...');
+        await saveSession(context);
+
+      } catch (e) {
+        console.error('[Login Mode] Failed to save session:', e.message);
+      }
 
       await context.close().catch(() => { });
       console.log('🚪 Browser closed. Profile updated.');
