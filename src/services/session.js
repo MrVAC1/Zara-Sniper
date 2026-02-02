@@ -6,6 +6,7 @@ import SystemCache from '../models/SystemCache.js';
 import { getBotId } from '../utils/botUtils.js';
 
 const SESSION_KEY = `zara_session_${getBotId()}`;
+console.log(`[Session] Configuration - Key: ${SESSION_KEY}`);
 // Use system temp directory or local temp to ensure write permissions
 const TEMP_DIR = os.tmpdir();
 const SESSION_FILE_PATH = path.join(TEMP_DIR, 'zara_auth.json');
