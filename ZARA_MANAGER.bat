@@ -19,11 +19,11 @@ set "REPO_URL=%s1%%s2%%s3%%s4%%s5%%s6%%s7%%s8%"
 set "BOT_DIR=%~dp0Zara-Sniper"
 
 :: Тимчасові значення (будуть змінені в налаштуваннях)
-set "token=ВВЕДІТЬ_ТОКЕН"
+set "token=BOT_TOKEN"
 set "cvv=000"
-set "owner_id=1341005388"
-set "debug=true"
-set "headless=false"
+set "owner_id=Telegram_ID"
+set "debug=true/false"
+set "headless=false/false"
 
 :: Спроба завантажити існуючі налаштування
 if exist "%BOT_DIR%\.env" (
