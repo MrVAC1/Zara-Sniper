@@ -70,6 +70,16 @@ export async function saveSession(context) {
 
   try {
     const storageState = await context.storageState();
+
+    // Safety Check: Don't overwrite DB with empty/logged-out session
+    const cookies = storageState.cookies || [];
+    const hasAuth = cookies.some(c => c.name === 'Z_SESSION_ID' || c.name === 'itx-v-ev');
+
+    if (!hasAuth && cookies.length < 5) {
+      console.warn(`[Session] ⚠️ Skipping save: Session appears empty/logged out (${cookies.length} cookies). Preserving DB.`);
+      return;
+    }
+
     await saveSessionData(storageState);
   } catch (error) {
     console.error('[Session] Failed to save session:', error.message);
