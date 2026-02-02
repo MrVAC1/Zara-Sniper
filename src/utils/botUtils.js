@@ -7,7 +7,7 @@ import crypto from 'crypto';
  * @returns {string} Short hash ID (e.g., 'a1b2c3d4')
  */
 export function getBotId() {
-  const token = process.env.BOT_TOKEN;
+  const token = process.env.BOT_TOKEN ? process.env.BOT_TOKEN.trim() : null;
   if (!token) return 'global';
 
   // Create MD5 hash and take first 8 characters for brevity but uniqueness
