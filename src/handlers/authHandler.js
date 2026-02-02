@@ -1,5 +1,5 @@
 
-import { getBrowser } from '../services/browser.js';
+import { getContext } from '../services/browser.js';
 import { saveSession } from '../services/session.js';
 import { reportError } from '../services/logService.js';
 import User from '../models/User.js';
@@ -23,12 +23,13 @@ export async function handleLogin(ctx) {
 
   let page = null;
   try {
-    const { globalContext } = await getBrowser();
-    if (!globalContext) {
-      return ctx.reply('❌ Браузер не ініціалізовано. Спробуйте через хвилину.');
+
+    const context = getContext();
+    if (!context) {
+      return ctx.reply('❌ Браузер ще не готовий. Зачекайте 5-10 секунд після старту.');
     }
 
-    page = await globalContext.newPage();
+    page = await context.newPage();
 
     // 1. Navigate to Login Page
     await ctx.reply('🔄 Переходжу на сторінку входу...');
@@ -39,8 +40,9 @@ export async function handleLogin(ctx) {
     const emailInput = await page.waitForSelector('[data-qa-input-qualifier="logonId"]', { visible: true, timeout: 15000 });
     if (!emailInput) throw new Error('Email input not found (Akamai?)');
 
-    await emailInput.fill(email);
-    await new Promise(r => setTimeout(r, 1000));
+    // Stealth: Slow typing
+    await emailInput.type(email, { delay: Math.floor(Math.random() * 100) + 50 });
+    await new Promise(r => setTimeout(r, Math.floor(Math.random() * 1000) + 500));
 
     // Click Submit (Check specific button)
     await page.click('[data-qa-id="logon-form-submit"]');
@@ -70,8 +72,9 @@ export async function handleLogin(ctx) {
     const passwordInput = await page.waitForSelector('[data-qa-input-qualifier="password"]', { visible: true, timeout: 15000 });
     if (!passwordInput) throw new Error('Password input not found');
 
-    await passwordInput.fill(password);
-    await new Promise(r => setTimeout(r, 1000));
+    // Stealth: Slow typing
+    await passwordInput.type(password, { delay: Math.floor(Math.random() * 100) + 50 });
+    await new Promise(r => setTimeout(r, Math.floor(Math.random() * 1000) + 500));
 
     await page.click('[data-qa-id="logon-form-submit"]');
     await ctx.reply('🔑 Пароль введено. Очікую вхід...');
@@ -87,7 +90,7 @@ export async function handleLogin(ctx) {
     await new Promise(r => setTimeout(r, 5000)); // Final settle
 
     // 6. Save Valid Session
-    await saveSession(globalContext);
+    await saveSession(context);
 
     // Final Screenshot
     const finalShot = await page.screenshot({ type: 'jpeg', quality: 70 });

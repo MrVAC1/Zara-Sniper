@@ -3,7 +3,7 @@ import SniperTask from '../models/SniperTask.js';
 import User from '../models/User.js';
 import { getBotInstance } from '../utils/botInstance.js';
 import { startSniper } from '../services/sniperEngine.js';
-import { initBrowser } from '../services/browser.js';
+import { getContext } from '../services/browser.js';
 import { checkAvailability, getSizingInfo, STORE_IDS } from '../services/zaraApi.js';
 import { getBotId } from '../utils/botUtils.js';
 
@@ -32,11 +32,9 @@ export async function handleProductUrl(ctx, url) {
     }
 
     // Переконаємось, що браузер ініціалізовано
-    try {
-      await initBrowser();
-    } catch (browserError) {
-      console.error('❌ Browser init error:', browserError);
-      return ctx.reply('❌ Помилка запуску браузера. Спробуйте пізніше.');
+    const context = getContext();
+    if (!context) {
+      throw new Error("Браузер не ініціалізовано. Будь ласка, запустіть бота заново або зачекайте ініціалізації.");
     }
 
     // Парсинг товару з Retry логікою (3 спроби)
@@ -44,8 +42,11 @@ export async function handleProductUrl(ctx, url) {
     let attempts = 0;
     while (attempts < 3 && !productData) {
       try {
+        // Use existing page or create new one
+        const page = context.pages().length > 0 ? context.pages()[0] : await context.newPage();
+
         // Тепер parseProductOptions повертає { ..., page, productId }
-        productData = await parseProductOptions(url);
+        productData = await parseProductOptions(url, page);
       } catch (e) {
         attempts++;
         console.warn(`Attempt ${attempts} failed: ${e.message}`);

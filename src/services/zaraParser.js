@@ -6,18 +6,24 @@ const { GOTO_TIMEOUT } = getTimeConfig();
 /**
  * Парсинг доступних кольорів та розмірів товару
  */
-export async function parseProductOptions(url) {
-  // Використовуємо createTaskPage, який сам перевіряє/створює браузер
-  let page = null;
+export async function parseProductOptions(url, existingPage = null) {
+  // Використовуємо createTaskPage, який сам перевіряє/створює браузер, АБО беремо існуючу сторінку
+  let page = existingPage;
 
   try {
-    // Phase 0: Inject Cookies BEFORE navigating
+    // Phase 0: Inject Cookies BEFORE navigating (only if creating new or existing needs it?)
+    // Safe to run getBrowser() check even if we have a page, but generally we want to ensure context.
     const browser = await import('./browser.js').then(m => m.getBrowser());
+
+    // Inject cookies regardless (idempotent-ish)
     if (browser) {
       await injectRegionalCookies(browser, url);
     }
 
-    page = await createTaskPage('parse-product');
+    if (!page) {
+      page = await createTaskPage('parse-product');
+    }
+
     console.log(`🔍 [Parser] Відкриваю сторінку: ${url}`);
 
     // Динамічне очікування завантаження

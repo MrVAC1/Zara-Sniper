@@ -18,8 +18,12 @@ const require = createRequire(import.meta.url);
 const stealth = StealthPlugin();
 chromium.use(stealth);
 
+// Global Browser Context
 let globalContext = null;
 let isInitializing = false;
+
+// Getter to retrieve the *current* runtime context
+export const getContext = () => globalContext;
 
 const IS_MAC = process.platform === 'darwin';
 const IS_DOCKER = process.env.IS_DOCKER === 'true' || process.env.K_SERVICE; // Detects Docker or K8s/HF
