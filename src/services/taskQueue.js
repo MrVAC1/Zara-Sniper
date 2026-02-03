@@ -16,7 +16,7 @@ class TaskQueue {
   }
 
   /**
-   * Логування з префіксом Task ID
+   * Логування з префіксом Task ID та часовою міткою
    */
   createLogger(taskId) {
     const logger = {
@@ -26,12 +26,27 @@ class TaskQueue {
         const duration = (now - this.lastLogTime) / 1000;
         this.lastLogTime = now;
         const timeStr = new Date(now).toLocaleTimeString('uk-UA', { hour12: false });
-        return `[${timeStr}] [+${duration.toFixed(2)}s]`;
+        return { timeStr, delta: duration.toFixed(2) };
       },
-      log: function (message) { console.log(`[Task ${taskId}] ${this._getDuration()} ${message}`); },
-      error: function (message) { console.error(`[Task ${taskId}] ${this._getDuration()} ❌ ${message}`); },
-      success: function (message) { console.log(`[Task ${taskId}] ${this._getDuration()} ✅ ${message}`); },
-      warn: function (message) { console.warn(`[Task ${taskId}] ${this._getDuration()} ⚠️ ${message}`); }
+      _formatLine(line, timeObj) {
+        if (!line) return '';
+        return `[Task ${taskId}] [${timeObj.timeStr}] [+${timeObj.delta}s] ${line}`;
+      },
+      _logTo(originalFn, message) {
+        const timeObj = this._getDuration();
+        const lines = String(message).split('\n');
+        lines.forEach(line => {
+          if (line.trim() === '') {
+            originalFn('');
+          } else {
+            originalFn(this._formatLine(line, timeObj));
+          }
+        });
+      },
+      log: function (message) { this._logTo(console.log, message); },
+      error: function (message) { this._logTo(console.error, message); },
+      success: function (message) { this._logTo(console.log, `✅ ${message}`); },
+      warn: function (message) { this._logTo(console.warn, message); }
     };
     this.loggers.set(taskId.toString(), logger);
     return logger;

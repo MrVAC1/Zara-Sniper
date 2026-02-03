@@ -52,7 +52,7 @@ export async function checkAvailability(storeId, productId, targetSkuId = null, 
 
         if (isDebug) {
             const out = context.logger ? context.logger : console;
-            out.log(`\n[DEBUG_API] URL: ${url}`);
+            out.log(`[DEBUG_API] URL: ${url}`);
             out.log(`[DEBUG_API] Product ID: ${productId}`);
             out.log(`[DEBUG_API] Time: ${duration}ms`);
 

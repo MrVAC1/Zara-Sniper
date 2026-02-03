@@ -63,32 +63,55 @@ const originalLog = console.log;
 const originalWarn = console.warn;
 const originalError = console.error;
 
+const formatArgs = (args) => {
+  if (args.length === 0) return [];
+  // If first arg is a string with newlines, we need to handle it
+  if (typeof args[0] === 'string' && args[0].includes('\n')) {
+    const lines = args[0].split('\n');
+    return lines.map(line => {
+      if (line.trim() === '') return '';
+      if (line.includes('[Owner:')) return line;
+      return `${logPrefix} ${line}`;
+    }).join('\n');
+  }
+  if (typeof args[0] === 'string' && args[0].includes('[Owner:')) {
+    return args;
+  }
+  return [logPrefix, ...args];
+};
+
 console.log = (...args) => {
   if (args.length === 0 || (args.length === 1 && args[0] === '')) {
     return originalLog('');
   }
-  if (typeof args[0] === 'string' && args[0].includes('[Owner:')) {
-    return originalLog(...args);
+  const formatted = formatArgs(args);
+  if (Array.isArray(formatted)) {
+    originalLog(...formatted);
+  } else {
+    originalLog(formatted);
   }
-  originalLog(logPrefix, ...args);
 };
 console.warn = (...args) => {
   if (args.length === 0 || (args.length === 1 && args[0] === '')) {
     return originalWarn('');
   }
-  if (typeof args[0] === 'string' && args[0].includes('[Owner:')) {
-    return originalWarn(...args);
+  const formatted = formatArgs(args);
+  if (Array.isArray(formatted)) {
+    originalWarn(...formatted);
+  } else {
+    originalWarn(formatted);
   }
-  originalWarn(logPrefix, ...args);
 };
 console.error = (...args) => {
   if (args.length === 0 || (args.length === 1 && args[0] === '')) {
     return originalError('');
   }
-  if (typeof args[0] === 'string' && args[0].includes('[Owner:')) {
-    return originalError(...args);
+  const formatted = formatArgs(args);
+  if (Array.isArray(formatted)) {
+    originalError(...formatted);
+  } else {
+    originalError(formatted);
   }
-  originalError(logPrefix, ...args);
 };
 // -----------------------------
 

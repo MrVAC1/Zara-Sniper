@@ -11,7 +11,10 @@ import { refreshSession } from './tokenManager.js';
 import { triggerIpGuard, isSystemPaused } from './healthGuard.js';
 import { parseProductOptions } from './zaraParser.js';
 import { reportError } from './logService.js';
-import { getBotId } from '../utils/botUtils.js';
+import { getBotId, Semaphore } from '../utils/botUtils.js';
+
+// Global Semaphore for serializing API checks Cross-Task
+const apiSemaphore = new Semaphore(1);
 
 dotenv.config();
 
@@ -601,11 +604,19 @@ export async function addToCart(page, sizeElement, selectedColor, logger) {
  */
 export async function verifyCartAddition(page, logger) {
   try {
-    // 1. Instant check for cart count (Fastest method)
     const countSelector = 'span[data-qa-id="layout-header-go-to-cart-items-count"]';
-    const cartCount = await page.$eval(countSelector, el => parseInt(el.textContent) || 0).catch(() => 0);
 
-    if (cartCount > 0) {
+    // 1. Wait for cart count to be > 0 (Robust verification)
+    logger.log('[Cart] Очікую оновлення лічильника кошика...');
+    const result = await page.waitForFunction((sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return false;
+      const count = parseInt(el.textContent) || 0;
+      return count > 0;
+    }, countSelector, { timeout: 5000 }).catch(() => null);
+
+    if (result) {
+      const cartCount = await page.$eval(countSelector, el => parseInt(el.textContent) || 0).catch(() => 0);
       logger.success(`Товар у кошику (кількість: ${cartCount}). Переходжу до оформлення...`);
       return true;
     }
@@ -614,7 +625,10 @@ export async function verifyCartAddition(page, logger) {
     await page.waitForSelector('[data-qa-id="layout-header-go-to-cart"]', { timeout: TIMEOUT_FAST_SELECTOR }).catch(() => null);
 
     const cartBtn = await page.$('[data-qa-id="layout-header-go-to-cart"]');
-    if (cartBtn) return true;
+    if (cartBtn) {
+      logger.success('Товар у кошику (знайдено кнопку кошика).');
+      return true;
+    }
 
     // 3. Last fallback: check for success messages
     let successMessage = await page.evaluate(() => {
@@ -629,9 +643,11 @@ export async function verifyCartAddition(page, logger) {
     }).catch(() => false);
 
     if (successMessage) {
-      logger.success('Товар успішно додано в кошик');
+      logger.success('Товар успішно додано в кошик (через повідомлення)');
       return true;
     }
+
+    logger.warn('[Cart] Не вдалося верифікувати додавання в кошик.');
     return false;
   } catch (error) {
     logger.error(`Помилка верифікації кошика: ${error.message}`);
@@ -1377,17 +1393,25 @@ async function sniperLoop(task, telegramBot, logger) {
               const currentBotId = getBotId();
               const huntingTasks = await SniperTask.find({ botId: currentBotId, status: 'hunting' }).select('_id').sort({ _id: 1 });
               const taskIndex = huntingTasks.findIndex(t => t._id.toString() === task._id.toString()) + 1;
-              console.log(''); // Empty line for readability
-              logger.log(`[Status] 🔭 Monitoring Item ${taskIndex}/${huntingTasks.length}: ${task.productName}`);
+              // 2. API Check (Sequential across all tasks to group logs)
+              await apiSemaphore.acquire();
+              let data;
+              try {
+                // User Request: Log Task Index and Status together
+                logger.log(`[Status] 🔭 Monitoring Item ${taskIndex}/${huntingTasks.length}: ${task.productName}`);
 
-              // 2. API Check
-              // logger.log(`[API] Checking availability...`);
-              const data = await checkAvailability(storeId, productId, task.skuId, {
-                isDebug: true,
-                logger,
-                color: task.selectedColor?.name,
-                size: task.selectedSize?.name
-              });
+                data = await checkAvailability(storeId, productId, task.skuId, {
+                  isDebug: true,
+                  logger,
+                  color: task.selectedColor?.name,
+                  size: task.selectedSize?.name
+                });
+
+                // Sequential Delay: Ensure logs from next task don't start for at least 200ms
+                await delay(200);
+              } finally {
+                apiSemaphore.release();
+              }
 
               // --- WAITING FOR CATALOG LOGIC ---
               if (isWaitingForCatalog) {
