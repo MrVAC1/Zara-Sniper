@@ -1356,7 +1356,10 @@ async function sniperLoop(task, telegramBot, logger) {
 
             // 2. API Check
             // logger.log(`[API] Checking availability...`);
-            const data = await checkAvailability(storeId, productId, task.skuId);
+            const data = await checkAvailability(storeId, productId, task.skuId, {
+              color: task.selectedColor?.name,
+              size: task.selectedSize?.name
+            });
 
             // --- WAITING FOR CATALOG LOGIC ---
             if (isWaitingForCatalog) {
@@ -1611,7 +1614,10 @@ async function sniperLoop(task, telegramBot, logger) {
             // Only strictly enforce API check if we have CONFIDENCE in our SKU (isSkuValidated = true)
             // If we are running on "Blind Faith" (DOM said yes, but API mismatch), we skip this check to avoid false negative.
             if (isSkuValidated) {
-              const reCheck = await checkAvailability(storeId, productId, task.skuId);
+              const reCheck = await checkAvailability(storeId, productId, task.skuId, {
+                color: task.selectedColor?.name,
+                size: task.selectedSize?.name
+              });
               const reTarget = reCheck?.skusAvailability?.find(s => s.sku == task.skuId);
               const isStillAvailable = reTarget && (reTarget.availability === 'in_stock' || reTarget.availability === 'low_stock');
 

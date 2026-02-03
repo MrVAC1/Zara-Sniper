@@ -52,6 +52,8 @@ const LAUNCH_ARGS = [
   '--ignore-certificate-errors' // Added per user request
 ];
 
+const KEEPER_URL = 'https://www.zara.com/ua/uk/';
+
 if (IS_DOCKER) {
   LAUNCH_ARGS.push(
     '--disable-dev-shm-usage',
@@ -246,8 +248,33 @@ export async function initBrowser(userDataDir) {
     globalContext.setDefaultTimeout(30000);
     globalContext.setDefaultNavigationTimeout(60000);
 
+    // --- KEEPER TAB INITIALIZATION ---
+    // Ensure one tab is always open (Keeper) to prevent browser closure
+    const pages = globalContext.pages();
+    let keeperPage = null;
+
+    // Check if we already have a keeper (e.g. from session restore or previous run)
+    for (const p of pages) {
+      if (p.url().includes('zara.com/ua/uk') && !p.isClosed()) {
+        keeperPage = p;
+        break;
+      }
+    }
+
+    if (!keeperPage) {
+      console.log(`[Init] 🛡️ Opening Keeper Tab (${KEEPER_URL})...`);
+      keeperPage = await globalContext.newPage();
+      // Don't await goto strictly to avoid blocking init if it's slow
+      keeperPage.goto(KEEPER_URL, { waitUntil: 'domcontentloaded' }).catch(e => console.warn('[Keeper] Load warning:', e.message));
+    } else {
+      console.log('[Init] 🛡️ Keeper Tab already exists.');
+    }
+    // ---------------------------------
+
     // --- LAZY COOKIE VERIFICATION ---
     try {
+      // Use the keeper page for verification instead of a new one to save resources?
+      // Or stick to current logic. Current logic creates new page.
       const page = await globalContext.newPage();
 
       // Wake up context
@@ -404,8 +431,8 @@ export async function initBrowser(userDataDir) {
 
     if (globalContext.browser()) {
       globalContext.browser().on('disconnected', () => {
-        console.log('⚠️ Browser disconnected! Exiting...');
-        process.exit(0);
+        console.log('⚠️ Browser disconnected! Resetting global context...');
+        globalContext = null;
       });
     }
 
@@ -486,6 +513,17 @@ export function startAutoCleanup(context, activePages) {
           }
 
           if (!isAssociated && isBlank) {
+            // Additional Check: Is it the Keeper Tab?
+            // If the URL matches KEEPER_URL, DO NOT CLOSE.
+            if (url.includes('zara.com') && !url.includes('cart') && !url.includes('search')) {
+              // Heuristic: If it looks like a main page, treat as keeper candidate
+              // Better: check exact KEEPER_URL or part of it
+              if (url.includes('zara.com/ua/uk')) {
+                // console.log('[Cleaner] Skipping Keeper Tab.');
+                continue;
+              }
+            }
+
             console.log(`[Cleaner] Closing inactive tab: ${url || 'empty'}`);
             await page.close().catch(() => { });
           }

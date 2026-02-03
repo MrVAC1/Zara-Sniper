@@ -15,7 +15,7 @@ export const STORE_IDS = {
  * Check availability via API
  * GET https://www.zara.com/itxrest/1/catalog/store/[STORE_ID]/product/id/[PRODUCT_ID]/availability
  */
-export async function checkAvailability(storeId, productId, targetSkuId = null) {
+export async function checkAvailability(storeId, productId, targetSkuId = null, context = {}) {
     const headers = await getHeaders(storeId);
     if (!headers || !headers['Cookie']) {
         console.warn('[API] Warning: No headers/cookies available. Returning null to trigger refresh...');
@@ -54,6 +54,9 @@ export async function checkAvailability(storeId, productId, targetSkuId = null) 
             console.log(`\n[DEBUG_API] URL: ${url}`);
             console.log(`[DEBUG_API] Product ID: ${productId}`);
             console.log(`[DEBUG_API] Time: ${duration}ms`);
+
+            if (context.color) console.log(`[DEBUG_API] Color: ${context.color}`);
+            if (context.size) console.log(`[DEBUG_API] Size: ${context.size}`);
 
             if (targetSkuId && data.skusAvailability) {
                 const targetSku = data.skusAvailability.find(s => s.sku === targetSkuId);
