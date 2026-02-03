@@ -23,6 +23,17 @@ let isCheckoutLocked = false;
 let checkoutQueue = []; // Array of { taskId, priority, resolve }
 const CHECKOUT_MAX_LOCK_TIME = 120000; // 120 seconds watchdog
 
+// --- WATCHDOG STATE ---
+let lastGlobalActivity = Date.now();
+let watchdogInterval = null;
+
+/**
+ * Updates the global activity timestamp to prevent watchdog restart
+ */
+export function updateGlobalActivity() {
+  lastGlobalActivity = Date.now();
+}
+
 // Queue Helpers
 function requestCheckoutLock(taskId, priority) {
   return new Promise((resolve) => {
@@ -190,6 +201,144 @@ export const activePages = new Map();
  */
 export function getTaskPage(taskId) {
   return activePages.get(taskId.toString());
+}
+
+
+/**
+ * Perform a full global restart of the bot (Watchdog or Manual)
+ */
+export async function fullRestart(telegramBot) {
+  console.error('[Watchdog] 🚨 INITIATING FULL GLOBAL RESTART...');
+
+  // 1. Notify Owners
+  const ownerIdFull = process.env.OWNER_ID || '';
+  const owners = ownerIdFull.split(',').map(id => id.trim()).filter(id => id);
+  for (const owner of owners) {
+    try {
+      await telegramBot.telegram.sendMessage(owner, '🔄 <b>Soft Restart: Оновлюю завдання...</b>\nБот перезапускає моніторинг без закриття браузера. Перевіряю з’єднання та авторизацію...', { parse_mode: 'HTML' });
+    } catch (e) { }
+  }
+
+  // 2. Stop all active workers and clear queue (WITHOUT changing DB status)
+  try {
+    const activeTaskIds = Array.from(activePages.keys());
+    for (const taskId of activeTaskIds) {
+      // Remove from execution queue
+      taskQueue.remove(taskId.toString());
+
+      // Close the specific worker page
+      const page = activePages.get(taskId.toString());
+      if (page) await page.close().catch(() => { });
+      activePages.delete(taskId.toString());
+    }
+    taskQueue.clear();
+  } catch (e) { }
+
+  // 3. Verify Session Health
+  try {
+    const context = await getBrowser();
+    if (context) {
+      const checkPage = await context.newPage();
+      try {
+        console.log('[Watchdog] Checking session health...');
+        await checkPage.goto('https://www.zara.com/ua/uk/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await new Promise(r => setTimeout(r, 2000));
+
+        const isLoggedIn = await checkPage.evaluate(() => {
+          const text = document.body.innerText;
+          return !text.includes('Вхід') && !text.includes('LOG IN') && !text.includes('IDENTIFICATION');
+        });
+
+        if (!isLoggedIn) {
+          console.warn('[Watchdog] Session LOST! Sending alert.');
+          const primaryOwner = owners[0];
+          if (primaryOwner) {
+            await telegramBot.telegram.sendMessage(primaryOwner, '⚠️ <b>Увага: Сесія втрачена!</b>\nБот не авторизований в акаунті Zara. Потрібен ручний вхід або оновлення куків.', { parse_mode: 'HTML' });
+          }
+        } else {
+          console.log('[Watchdog] Session is healthy (Authorized).');
+        }
+      } catch (err) {
+        console.error(`[Watchdog] Session check failed: ${err.message}`);
+      } finally {
+        await checkPage.close().catch(() => { });
+      }
+    } else {
+      console.log('[Watchdog] Browser not found, re-initializing...');
+      await initBrowser();
+    }
+  } catch (e) { }
+
+  // 5. Short delay before re-init
+  await new Promise(r => setTimeout(r, 2000));
+
+  // 6. Re-trigger all hunting tasks from DB
+  try {
+    const currentBotId = getBotId();
+    // Strict scoping: Only restore tasks belonging to this bot instance
+    const tasks = await SniperTask.find({
+      botId: currentBotId,
+      status: { $in: ['hunting', 'HUNTING', 'processing', 'at_checkout', 'SEARCHING', 'PENDING', 'MONITORING'] }
+    });
+    console.log(`[Watchdog] 🔄 Restoring ${tasks.length} tasks (BotID: ${currentBotId})...`);
+
+    // Reset status to hunting for fresh start
+    for (const t of tasks) {
+      t.status = 'hunting';
+      await t.save();
+
+      // Start sniper for each restored task
+      startSniper(t._id.toString(), telegramBot).catch(err => {
+        console.error(`[Watchdog] Failed to restart task ${t._id}: ${err.message}`);
+      });
+
+      console.log(`[Watchdog] Task ${t._id} restored to hunting.`);
+    }
+  } catch (e) {
+    console.error(`[Watchdog] Failed to restore tasks: ${e.message}`);
+  }
+
+  // 7. Reset activity time
+  updateGlobalActivity();
+}
+
+/**
+ * Starts the Global Watchdog timer
+ */
+export function startGlobalWatchdog(telegramBot) {
+  if (watchdogInterval) clearInterval(watchdogInterval);
+
+  const THRESHOLD_MS = 20000; // User requested 20s
+  console.log(`[Watchdog] 🐕 Global Activity Watchdog started (${THRESHOLD_MS / 1000}s threshold, 1s precision).`);
+
+  watchdogInterval = setInterval(async () => {
+    try {
+      const currentBotId = getBotId();
+      const huntingTasksCount = await SniperTask.countDocuments({
+        botId: currentBotId,
+        status: { $in: ['hunting', 'HUNTING', 'processing', 'at_checkout', 'SEARCHING', 'PENDING', 'MONITORING'] }
+      });
+
+      if (huntingTasksCount > 0) {
+        const inactiveTime = Date.now() - lastGlobalActivity;
+
+        // Log if halfway to threshold
+        if (inactiveTime > 10000 && Math.floor(inactiveTime / 1000) % 5 === 0) {
+          console.log(`[Watchdog] ⚠️ Warning: No activity for ${Math.round(inactiveTime / 1000)}s (Restart at ${THRESHOLD_MS / 1000}s)`);
+        }
+
+        if (inactiveTime > THRESHOLD_MS) {
+          console.warn(`[Watchdog] 🚨 Activity Stall Detected! No activity for ${Math.round(inactiveTime / 1000)}s.`);
+          await fullRestart(telegramBot);
+        }
+      } else {
+        // No active tasks, keep activity time fresh
+        updateGlobalActivity();
+      }
+    } catch (err) {
+      console.error(`[Watchdog] Error in loop: ${err.message}`);
+    }
+  }, 1000); // More frequent check for "real" time accuracy
 }
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -1409,6 +1558,7 @@ async function sniperLoop(task, telegramBot, logger) {
 
                 // Sequential Delay: Ensure logs from next task don't start for at least 200ms
                 await delay(200);
+                updateGlobalActivity(); // Activity confirmed
               } finally {
                 apiSemaphore.release();
               }
@@ -1834,6 +1984,7 @@ export async function stopAndCloseTask(taskId) {
 }
 
 export async function stopSniper(taskId) {
+  taskQueue.remove(taskId.toString());
   const task = await SniperTask.findById(taskId);
   if (task) {
     task.status = 'paused';

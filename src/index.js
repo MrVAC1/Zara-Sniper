@@ -1,6 +1,7 @@
 import dns from 'node:dns'; // або const dns = require('node:dns');
 dns.setDefaultResultOrder('ipv4first');
 import dotenv from 'dotenv';
+dotenv.config();
 import fs from 'fs';
 import path from 'path';
 import http from 'http'; // Keep-alive for HF Spaces
@@ -13,25 +14,26 @@ import { checkAccess } from './middleware/security.js';
 import {
   handleStart, handleAdd, handleTasks, handleView, handlePause, handleResume, handleDelete, handleHelp, handleStop,
   handleDeleteAll, handleTaskScreenshot, handleInfo, handleDeleteMenu, handleTaskDetail, handleGlobalScreenshot,
-  handleLogs
+  handleLogs, handleRestart, handleConfirmRestart
 } from './handlers/commandHandler.js';
 import { handleProductUrl, handleColorSelection, handleSizeSelection } from './handlers/productHandler.js';
 import { handleLogin } from './handlers/authHandler.js';
 // import { startAllSnipers } from './services/sniperEngine.js'; // Removed unused import
 import { initializeActiveTasks } from './services/taskQueue.js';
-import { activePages } from './services/sniperEngine.js';
+import { activePages, startGlobalWatchdog } from './services/sniperEngine.js';
 import SniperTask from './models/SniperTask.js';
 import User from './models/User.js';
 import { createSystemTray } from './services/systemTray.js';
 import { setupErrorHandling } from './services/errorHandler.js';
 import { setBotInstance } from './utils/botInstance.js';
+import { getBotId } from './utils/botUtils.js';
 import { getTimeConfig } from './utils/timeUtils.js';
 import { setLogServiceBot } from './services/logService.js';
 import { startSessionSync, saveSession } from './services/session.js';
 
 const { GOTO_TIMEOUT } = getTimeConfig();
 
-dotenv.config();
+// Environment already loaded at top
 
 // --- SSL CERTIFICATE RESTORATION ---
 if (process.env.SSL_CERT_BASE64) {
@@ -167,6 +169,7 @@ bot.command('screenshot', handleGlobalScreenshot);
 // --- LOGS COMMAND ---
 bot.command('logs', handleLogs);
 bot.command('login', handleLogin);
+bot.command('restart', handleRestart);
 // --------------------
 
 // Обробка кнопок головного меню (Reply Keyboard)
@@ -177,6 +180,7 @@ bot.hears('🖥 Screenshot', handleGlobalScreenshot);
 bot.hears('🗑 Видалити', handleDeleteMenu);
 bot.hears('ℹ️ Info', handleInfo);
 bot.hears('🛑 Стоп', handleStop);
+bot.hears('🔄 Рестарт', handleRestart);
 
 // Callback queries для головного меню (для сумісності, якщо старі повідомлення залишились)
 bot.action('cmd_start', handleStart);
@@ -237,6 +241,9 @@ bot.action(/^stop_task:(.+)$/, async (ctx) => {
   const taskId = ctx.match[1];
   await handlePause(ctx, taskId); // Reuse pause logic for stop
 });
+
+bot.action('confirm_global_restart', (ctx) => handleConfirmRestart(ctx, bot));
+bot.action('cancel_restart', (ctx) => ctx.deleteMessage().catch(() => { }));
 // ------------------------------------------
 
 // Callback queries (вибір кольору та розміру)
@@ -399,8 +406,10 @@ async function main() {
     }, 300000);
 
     // Check for active tasks to optimize startup
+    const currentBotId = getBotId();
     const activeTasksCount = await SniperTask.countDocuments({
-      status: { $in: ['hunting', 'SEARCHING', 'PENDING', 'MONITORING', 'processing'] }
+      botId: currentBotId,
+      status: { $in: ['hunting', 'SEARCHING', 'PENDING', 'MONITORING', 'processing', 'at_checkout'] }
     });
 
     if (activeTasksCount > 0) {
@@ -550,6 +559,9 @@ async function main() {
 
     // Налаштування обробки помилок
     setupErrorHandling(bot, getBrowser());
+
+    // --- START WATCHDOG ---
+    startGlobalWatchdog(bot);
 
     console.log('✅ Zara Sniper Bot готовий до роботи!');
 

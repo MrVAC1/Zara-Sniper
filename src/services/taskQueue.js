@@ -148,6 +148,15 @@ class TaskQueue {
   }
 
   /**
+   * Повністю очистити чергу (використовується при рестарті)
+   */
+  clear() {
+    this.queue = [];
+    this.loggers.clear();
+    // Завдання, що виконуються, самі видаляться з running при завершенні/помилці
+  }
+
+  /**
    * Отримати список виконуваних завдань
    */
   getRunningTasks() {
@@ -173,7 +182,7 @@ export async function initializeActiveTasks(context, telegramBot) {
 
     const tasks = await SniperTask.find({
       botId: CURRENT_BOT_ID,
-      status: { $in: ['SEARCHING', 'HUNTING', 'PENDING', 'MONITORING', 'hunting', 'processing'] }
+      status: { $in: ['SEARCHING', 'HUNTING', 'PENDING', 'MONITORING', 'hunting', 'processing', 'at_checkout'] }
     });
 
     if (tasks.length === 0) {

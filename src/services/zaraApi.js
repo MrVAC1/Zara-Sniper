@@ -56,11 +56,11 @@ export async function checkAvailability(storeId, productId, targetSkuId = null, 
             out.log(`[DEBUG_API] Product ID: ${productId}`);
             out.log(`[DEBUG_API] Time: ${duration}ms`);
 
-            if (context.color) out.log(`[DEBUG_API] Color: ${context.color}`);
-            if (context.size) out.log(`[DEBUG_API] Size: ${context.size}`);
+            if (context.color) out.log(`[DEBUG_API] Color: "${String(context.color).trim()}"`);
+            if (context.size) out.log(`[DEBUG_API] Size: "${String(context.size).trim()}"`);
 
             if (targetSkuId && data.skusAvailability) {
-                const targetSku = data.skusAvailability.find(s => s.sku === targetSkuId);
+                const targetSku = data.skusAvailability.find(s => s.sku == targetSkuId);
                 out.log(`[DEBUG_API] SKU Data: ${targetSku ? JSON.stringify(targetSku, null, 2) : 'SKU NOT FOUND IN RESPONSE'}`);
             } else {
                 out.log(`[DEBUG_API] Response: ${JSON.stringify(data, null, 2).substring(0, 500)}...`);

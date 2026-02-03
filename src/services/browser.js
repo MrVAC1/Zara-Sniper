@@ -49,7 +49,8 @@ const LAUNCH_ARGS = [
   '--disable-features=IsolateOrigins,site-per-process',
   '--disable-site-isolation-trials',
   '--use-fake-ui-for-media-stream',
-  '--ignore-certificate-errors' // Added per user request
+  '--ignore-certificate-errors',
+  '--disable-gpu'
 ];
 
 const KEEPER_URL = 'https://www.zara.com/ua/uk/';
@@ -147,29 +148,21 @@ export async function initBrowser(userDataDir = USER_DATA_DIR) {
   isInitializing = true;
 
   try {
-    // Determine Executable Path
-    // Pure Playwright Chromium (no system chrome)
-    // By default, playwright-extra uses the bundled chromium if 'channel' is not specified
-    // and executablePath is not set.
-
-    // Close existing dead context
-    if (globalContext) {
-      try { await globalContext.close(); } catch (e) { }
-      globalContext = null;
-    }
-
-    // Handle Singleton Lock (Windows/Chromium glitches)
+    // 1. Handle Singleton Lock (Windows/Chromium glitches)
     const lockFile = path.join(userDataDir, 'SingletonLock');
     if (fs.existsSync(lockFile)) {
-      try {
-        // Wait a bit
-        await new Promise(r => setTimeout(r, 1000));
-        if (fs.existsSync(lockFile)) {
-          fs.unlinkSync(lockFile);
-          console.log('🧹 SingletonLock removed forcibly.');
+      console.log('🧹 SingletonLock detected. Attempting removal...');
+      for (let i = 0; i < 3; i++) {
+        try {
+          if (fs.existsSync(lockFile)) {
+            fs.unlinkSync(lockFile);
+            console.log(`[Init] ✅ SingletonLock removed (Attempt ${i + 1}).`);
+            break;
+          }
+        } catch (e) {
+          console.warn(`[Init] ⚠️ SingletonLock busy (Attempt ${i + 1}): ${e.message}`);
+          await new Promise(r => setTimeout(r, 1000));
         }
-      } catch (e) {
-        console.warn('⚠️ Could not remove SingletonLock:', e.message);
       }
     }
 
@@ -853,4 +846,29 @@ async function applyStealthScripts(context) {
     Object.defineProperty(navigator, 'platform', { get: () => 'Win32' }); // Mimic Windows Platform
     // ---------------------------------------------------------
   });
+}
+
+/**
+ * Kill lingering Chromium processes on Windows to prevent profile locking
+ */
+export async function cleanupBrowserProcesses() {
+  if (process.platform !== 'win32') return;
+
+  try {
+    const { execSync } = require('child_process');
+    console.log('[Init] 🧹 Cleaning up lingering Chromium processes...');
+    // /F - force, /IM - image name, /T - tree (killer children)
+    // We ignore error if no processes found (exit code 128)
+    try {
+      execSync('taskkill /F /IM chrome.exe /T 2>nul');
+    } catch (e) { }
+    try {
+      execSync('taskkill /F /IM chromium.exe /T 2>nul');
+    } catch (e) { }
+
+    // Give OS time to release file handles
+    await new Promise(r => setTimeout(r, 1000));
+  } catch (err) {
+    console.warn(`[Init] ⚠️ Process cleanup warning: ${err.message}`);
+  }
 }

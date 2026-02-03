@@ -7,7 +7,6 @@ import Log from '../models/Log.js';
 import { getBrowser } from '../services/browser.js';
 import { getBotId } from '../utils/botUtils.js';
 
-const CURRENT_BOT_ID = getBotId();
 
 // Експортуємо клавіатуру, щоб її можна було використовувати в інших місцях
 export const MAIN_MENU_KEYBOARD = {
@@ -15,7 +14,7 @@ export const MAIN_MENU_KEYBOARD = {
     [{ text: '➕ Додати' }, { text: '📊 Статус' }],
     [{ text: '📸 View' }, { text: '🖥 Screenshot' }],
     [{ text: '🗑 Видалити' }, { text: 'ℹ️ Info' }],
-    [{ text: '🛑 Стоп' }]
+    [{ text: '🛑 Стоп' }, { text: '🔄 Рестарт' }]
   ],
   resize_keyboard: true
 };
@@ -37,6 +36,46 @@ export async function handleStart(ctx) {
     console.error('Error in handleStart:', e);
     // fallback
     await ctx.reply(messageText, { reply_markup: MAIN_MENU_KEYBOARD });
+  }
+}
+
+/**
+ * Команда /restart - Запит на підтвердження
+ */
+export async function handleRestart(ctx) {
+  console.log(`[Telegram] User ${ctx.from.id} requested Restart Menu.`);
+  try {
+    await ctx.reply('🔄 <b>Ви впевнені, що хочете виконати ПОВНИЙ рестарт бота?</b>\n\nЦе закриє всі вкладки, оновить браузер та перезапустить чергу завдань. Це допоможе, якщо бот завис.', {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ ТАК, рестарт', callback_data: 'confirm_global_restart' },
+            { text: '❌ НІ, відміна', callback_data: 'cancel_restart' }
+          ]
+        ]
+      }
+    });
+  } catch (e) {
+    console.error(`[Telegram] Error sending restart menu: ${e.message}`);
+  }
+}
+
+/**
+ * Обробник підтвердження рестарту
+ */
+export async function handleConfirmRestart(ctx, telegramBot) {
+  console.log(`[Telegram] User ${ctx.from.id} CONFIRMED Global Restart.`);
+  try {
+    await ctx.answerCbQuery('🔄 Запуск рестарту...');
+    await ctx.editMessageText('⚙️ <b>Запущено глобальний рестарт...</b>\nБудь ласка, зачекайте кілька секунд.', { parse_mode: 'HTML' });
+
+    const { fullRestart } = await import('../services/sniperEngine.js');
+    await fullRestart(telegramBot);
+
+  } catch (e) {
+    console.error('[Telegram] Restart failed:', e);
+    await ctx.reply('❌ Помилка рестарту: ' + e.message).catch(() => { });
   }
 }
 
@@ -96,7 +135,7 @@ export async function handleTasks(ctx, page = 1, statusFilter = null) {
 
   // Get unique statuses for this user
   // Get unique statuses for this BOT (Shared)
-  const uniqueStatuses = await SniperTask.distinct('status', { botId: CURRENT_BOT_ID });
+  const uniqueStatuses = await SniperTask.distinct('status', { botId: getBotId() });
 
   // Logical Menu Fork: 
   // If no filter selected AND multiple statuses exist -> show Category Menu
@@ -133,7 +172,7 @@ export async function handleTasks(ctx, page = 1, statusFilter = null) {
   // Build query
   // Shared Workspace Logic:
   // We use current bot's ID to filter tasks, so all admins of THIS bot see the same tasks.
-  const query = { botId: CURRENT_BOT_ID };
+  const query = { botId: getBotId() };
 
   if (statusFilter && statusFilter !== 'all') {
     query.status = statusFilter;
@@ -294,7 +333,7 @@ export async function handleView(ctx) {
   if (!user) return ctx.reply('❌ Користувача не знайдено');
 
   // Shared view: show hunting tasks for this bot
-  const tasks = await SniperTask.find({ botId: CURRENT_BOT_ID, status: 'hunting' });
+  const tasks = await SniperTask.find({ botId: getBotId(), status: 'hunting' });
 
   if (tasks.length === 0) {
     return ctx.reply('📭 Немає активних завдань для перегляду.');
@@ -347,9 +386,8 @@ export async function handleTaskScreenshot(ctx, taskId) {
  * Команда /screenshot - глобальний скріншот (всі активні вкладки)
  */
 export async function handleGlobalScreenshot(ctx) {
-  // Use isOwner helper for access control
   const { isOwner } = await import('../utils/auth.js');
-  if (!isOwner(userId)) {
+  if (!isOwner(ctx.from.id)) {
     return ctx.reply('⛔ Тільки власник може використовувати цю команду.');
   }
 
@@ -458,7 +496,7 @@ export async function handleDeleteMenu(ctx) {
 
   // Shared Workspace: Show all tasks for this BOT, not just user's
   // const tasks = await SniperTask.find({ userId: user._id });
-  const tasks = await SniperTask.find({ botId: CURRENT_BOT_ID });
+  const tasks = await SniperTask.find({ botId: getBotId() });
 
   if (tasks.length === 0) {
     return ctx.reply('📭 Список завдань порожній.');
@@ -509,7 +547,7 @@ export async function handleDelete(ctx, taskId) {
 
   // STRICT OWNERSHIP CHECK + DELETE
   // Delete based on ID and BOT SCOPE (anyone with access to this bot can delete)
-  const task = await SniperTask.findOneAndDelete({ _id: taskId, botId: CURRENT_BOT_ID });
+  const task = await SniperTask.findOneAndDelete({ _id: taskId, botId: getBotId() });
 
   const text = task
     ? `🗑 Завдання *${task.productName}* (${task.selectedSize?.name}) видалено.`
@@ -538,7 +576,7 @@ export async function handleDeleteAll(ctx) {
 
   // Shared Workspace: Delete ALL tasks for this BOT
   // const tasks = await SniperTask.find({ userId: user._id });
-  const tasks = await SniperTask.find({ botId: CURRENT_BOT_ID });
+  const tasks = await SniperTask.find({ botId: getBotId() });
 
   for (const task of tasks) {
     await stopAndCloseTask(task._id);
@@ -568,7 +606,7 @@ export async function handleStop(ctx) {
 
   // SOFT STOP: Find all active tasks for THIS BOT
   const tasks = await SniperTask.find({
-    botId: CURRENT_BOT_ID,
+    botId: getBotId(),
     status: { $in: ['hunting', 'processing', 'paused', 'monitoring'] }
   });
 
@@ -580,7 +618,7 @@ export async function handleStop(ctx) {
   for (const task of tasks) {
     try {
       await stopAndCloseTask(task._id);
-      task.status = 'stopped';
+      task.status = 'paused';
       await task.save();
       count++;
     } catch (e) {
@@ -602,9 +640,8 @@ export async function handleHelp(ctx) {
  * Команда /logs - перегляд останніх логів
  */
 export async function handleLogs(ctx) {
-  // Use isOwner helper for access control
   const { isOwner } = await import('../utils/auth.js');
-  if (!isOwner(userId)) {
+  if (!isOwner(ctx.from.id)) {
     return ctx.reply('⛔ Бот працює в Shared Mode. Логи доступні лише адміністратору.');
   }
 
