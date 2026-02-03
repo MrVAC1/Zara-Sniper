@@ -40,8 +40,10 @@ class TaskQueue {
           if (line.trim() === '') {
             originalFn('');
           } else {
+            const formatted = this._formatLine(line, timeObj);
+            originalFn(formatted);
+
             // Bridge to SessionLogger (File-based durable logging)
-            // Console output is disabled for tasks as per user request to keep console clean
             sessionLogger.log(level, {
               taskId,
               context: 'TASK',

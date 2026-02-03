@@ -146,9 +146,13 @@ class SessionLogger {
       logLine += `\n[ERROR STACK]\n${error.stack || error}\n`;
     }
 
-    // Вивід у консоль (ВИМКНЕНО за запитом користувача - логи йдуть лише у файли)
-    // const consoleMethod = level === 'ERROR' ? console.error : (level === 'WARN' ? console.warn : console.log);
-    // consoleMethod(logLine);
+    // Вивід у консоль
+    // Ми виводимо в консоль тільки системні та критичні повідомлення (context !== 'TASK').
+    // Логи завдань виводяться через TaskQueue, щоб зберегти формат з дельта-часом [+1.2s].
+    if (context !== 'TASK') {
+      const consoleMethod = level === 'ERROR' ? console.error : (level === 'WARN' ? console.warn : console.log);
+      consoleMethod(logLine);
+    }
 
     // Запис у відповідний файл
     let targetFile = null;
