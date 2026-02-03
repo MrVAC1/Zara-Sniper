@@ -113,11 +113,14 @@ function validateEnvironment() {
   }
 }
 
+// Default Profile Path (Platform Agnostic)
+export const USER_DATA_DIR = path.join(os.homedir(), '.zara_box_profile');
+
 /**
- * Initialize Browser with Persistent Context (Singleton)
- * @param {string} userDataDir - Path to the user data directory (REQUIRED)
+ * Initialize Playwright Browser Context with Persistent Profile
+ * @param {string} userDataDir - Path to the user data directory (Optional, defaults to standard path)
  */
-export async function initBrowser(userDataDir) {
+export async function initBrowser(userDataDir = USER_DATA_DIR) {
   // Validate Environment first
   validateEnvironment();
 

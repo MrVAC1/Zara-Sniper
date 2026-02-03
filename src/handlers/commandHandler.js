@@ -374,30 +374,25 @@ export async function handleGlobalScreenshot(ctx) {
 
     for (const [index, page] of validPages.entries()) {
       try {
-        await page.bringToFront(); // Focus tab
-        // Small delay for rendering if we just switched
-        await new Promise(r => setTimeout(r, 500));
+        if (page.isClosed()) continue; // Skip closed pages
+
+        // await page.bringToFront(); // Optional: Might cause focus stealing issues
+        // Instead of bringToFront, just capture. 
 
         const url = page.url();
         const shortUrl = url.length > 50 ? url.substring(0, 50) + '...' : url;
-        const timestamp = Date.now();
-        const screenshotPath = `screenshot_${timestamp}_${index}.png`;
 
-        await page.screenshot({ path: screenshotPath, fullPage: false });
+        // Use Buffer (Memory) instead of File I/O
+        const buffer = await page.screenshot({ type: 'jpeg', quality: 70, fullPage: false });
 
-        await ctx.replyWithPhoto({ source: screenshotPath }, {
+        await ctx.replyWithPhoto({ source: buffer }, {
           caption: `📄 **Tab ${index + 1}**\n🔗 \`${shortUrl}\`\n🛡️ **Proxy:** ${proxyInfo}`,
           parse_mode: 'Markdown'
         });
 
-        // Cleanup immediately
-        fs.unlink(screenshotPath, (err) => {
-          if (err) console.error(`Failed to delete screenshot: ${err.message}`);
-        });
-
       } catch (innerErr) {
         console.error(`Failed to capture tab ${index}: ${innerErr.message}`);
-        await ctx.reply(`❌ Помилка з вкладкою ${index + 1}: ${innerErr.message}`);
+        // await ctx.reply(`❌ Помилка з вкладкою ${index + 1}: ${innerErr.message}`); // Silent fail better?
       }
     }
 

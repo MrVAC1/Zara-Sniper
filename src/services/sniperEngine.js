@@ -1383,6 +1383,8 @@ async function sniperLoop(task, telegramBot, logger) {
               // 2. API Check
               // logger.log(`[API] Checking availability...`);
               const data = await checkAvailability(storeId, productId, task.skuId, {
+                isDebug: true,
+                logger,
                 color: task.selectedColor?.name,
                 size: task.selectedSize?.name
               });
@@ -1541,7 +1543,7 @@ async function sniperLoop(task, telegramBot, logger) {
 
               // 3. Wait
               await delay(API_MONITORING_INTERVAL);
-              await delay(100); // Extra pause as requested
+              await delay(200); // Increased pause as requested (was 100ms)
               attempts++; // Count API attempts as "activity"
 
               if (attempts % 10 === 0) {

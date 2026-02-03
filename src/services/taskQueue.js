@@ -19,21 +19,19 @@ class TaskQueue {
    * Логування з префіксом Task ID
    */
   createLogger(taskId) {
-    const ownerId = process.env.OWNER_ID ? process.env.OWNER_ID.split(',')[0].trim() : 'Unknown';
-    const prefix = `[Owner: ${ownerId}]`;
-
     const logger = {
       lastLogTime: Date.now(),
       _getDuration() {
         const now = Date.now();
         const duration = (now - this.lastLogTime) / 1000;
         this.lastLogTime = now;
-        return `[+${duration.toFixed(2)}s]`;
+        const timeStr = new Date(now).toLocaleTimeString('uk-UA', { hour12: false });
+        return `[${timeStr}] [+${duration.toFixed(2)}s]`;
       },
-      log: function (message) { console.log(`${prefix} [Task ${taskId}] ${message} ${this._getDuration()}`); },
-      error: function (message) { console.error(`${prefix} [Task ${taskId}] ❌ ${message} ${this._getDuration()}`); },
-      success: function (message) { console.log(`${prefix} [Task ${taskId}] ✅ ${message} ${this._getDuration()}`); },
-      warn: function (message) { console.warn(`${prefix} [Task ${taskId}] ⚠️ ${message} ${this._getDuration()}`); }
+      log: function (message) { console.log(`[Task ${taskId}] ${this._getDuration()} ${message}`); },
+      error: function (message) { console.error(`[Task ${taskId}] ${this._getDuration()} ❌ ${message}`); },
+      success: function (message) { console.log(`[Task ${taskId}] ${this._getDuration()} ✅ ${message}`); },
+      warn: function (message) { console.warn(`[Task ${taskId}] ${this._getDuration()} ⚠️ ${message}`); }
     };
     this.loggers.set(taskId.toString(), logger);
     return logger;

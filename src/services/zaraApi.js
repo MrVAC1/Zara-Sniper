@@ -51,18 +51,19 @@ export async function checkAvailability(storeId, productId, targetSkuId = null, 
         const data = await response.json();
 
         if (isDebug) {
-            console.log(`\n[DEBUG_API] URL: ${url}`);
-            console.log(`[DEBUG_API] Product ID: ${productId}`);
-            console.log(`[DEBUG_API] Time: ${duration}ms`);
+            const out = context.logger ? context.logger : console;
+            out.log(`\n[DEBUG_API] URL: ${url}`);
+            out.log(`[DEBUG_API] Product ID: ${productId}`);
+            out.log(`[DEBUG_API] Time: ${duration}ms`);
 
-            if (context.color) console.log(`[DEBUG_API] Color: ${context.color}`);
-            if (context.size) console.log(`[DEBUG_API] Size: ${context.size}`);
+            if (context.color) out.log(`[DEBUG_API] Color: ${context.color}`);
+            if (context.size) out.log(`[DEBUG_API] Size: ${context.size}`);
 
             if (targetSkuId && data.skusAvailability) {
                 const targetSku = data.skusAvailability.find(s => s.sku === targetSkuId);
-                console.log('[DEBUG_API] SKU Data:', targetSku ? JSON.stringify(targetSku, null, 2) : 'SKU NOT FOUND IN RESPONSE');
+                out.log(`[DEBUG_API] SKU Data: ${targetSku ? JSON.stringify(targetSku, null, 2) : 'SKU NOT FOUND IN RESPONSE'}`);
             } else {
-                console.log('[DEBUG_API] Response:', JSON.stringify(data, null, 2).substring(0, 500) + '...');
+                out.log(`[DEBUG_API] Response: ${JSON.stringify(data, null, 2).substring(0, 500)}...`);
             }
         }
 

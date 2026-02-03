@@ -32,43 +32,66 @@ async function runHealthCheck(telegramBot) {
 export async function checkSession(telegramBot) {
     const { GOTO_TIMEOUT } = getTimeConfig();
     let page = null;
-    try {
-        const browser = await getBrowser();
-        page = await browser.newPage();
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 3000;
 
-        // 1. Check Header on Home Page
-        await page.goto('https://www.zara.com/ua/uk/', { waitUntil: 'domcontentloaded', timeout: GOTO_TIMEOUT });
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            const browser = await getBrowser();
+            if (!browser) {
+                if (attempt < MAX_RETRIES) {
+                    console.log(`[Health] Browser context missing. Retrying (${attempt}/${MAX_RETRIES})...`);
+                    await new Promise(r => setTimeout(r, RETRY_DELAY));
+                    continue;
+                }
+                throw new Error('Browser context missing after retries');
+            }
 
-        const loginHeader = await page.$('[data-qa-id="layout-header-user-logon"]');
-        if (loginHeader) {
-            console.warn('[Health] Found "Logon" in header. User is NOT logged in.');
-            await notifySessionDead(telegramBot);
+            // Create NEW page for health check (avoid touching unrelated tabs)
+            page = await browser.newPage();
+
+            // 1. Check Header on Home Page
+            await page.goto('https://www.zara.com/ua/uk/', { waitUntil: 'domcontentloaded', timeout: GOTO_TIMEOUT });
+
+            const loginHeader = await page.$('[data-qa-id="layout-header-user-logon"]');
+            if (loginHeader) {
+                console.warn('[Health] Found "Logon" in header. User is NOT logged in.');
+                await notifySessionDead(telegramBot);
+                if (page) await page.close();
+                return false;
+            }
+
+            // 2. Check Account Page Redirect
+            await page.goto('https://www.zara.com/ua/uk/user/account', { waitUntil: 'domcontentloaded', timeout: GOTO_TIMEOUT });
+
+            const url = page.url();
+            const loginForm = await page.$('[data-qa-id="logon-form-submit"]');
+
+            if (url.includes('account.zara.com/login') || loginForm) {
+                console.warn('[Health] Redirected to Login page. Session is dead.');
+                await notifySessionDead(telegramBot);
+                if (page) await page.close();
+                return false;
+            }
+
+            console.log('[Health] Session is ACTIVE ✅');
             if (page) await page.close();
-            return false;
+            return true;
+
+        } catch (e) {
+            console.error(`[Health] Check failed (Attempt ${attempt}/${MAX_RETRIES}): ${e.message}`);
+            if (page) await page.close().catch(() => { });
+            page = null; // Reset for next loop
+
+            // If it's the last attempt, return False
+            if (attempt === MAX_RETRIES) {
+                return false;
+            }
+            // Wait before retry
+            await new Promise(r => setTimeout(r, RETRY_DELAY));
         }
-
-        // 2. Check Account Page Redirect
-        await page.goto('https://www.zara.com/ua/uk/user/account', { waitUntil: 'domcontentloaded', timeout: GOTO_TIMEOUT });
-
-        const url = page.url();
-        const loginForm = await page.$('[data-qa-id="logon-form-submit"]');
-
-        if (url.includes('account.zara.com/login') || loginForm) {
-            console.warn('[Health] Redirected to Login page. Session is dead.');
-            await notifySessionDead(telegramBot);
-            if (page) await page.close();
-            return false;
-        }
-
-        console.log('[Health] Session is ACTIVE ✅');
-        if (page) await page.close();
-        return true;
-
-    } catch (e) {
-        console.error('[Health] Check failed:', e.message);
-        if (page) await page.close().catch(() => { });
-        return false; // Fail safe
     }
+    return false;
 }
 
 async function notifySessionDead(telegramBot) {

@@ -64,18 +64,30 @@ const originalWarn = console.warn;
 const originalError = console.error;
 
 console.log = (...args) => {
-  if (args.length > 0 && typeof args[0] === 'string') {
-    if (args[0] === '') return originalLog('');
-    if (args[0].includes('[Owner:')) return originalLog(...args);
+  if (args.length === 0 || (args.length === 1 && args[0] === '')) {
+    return originalLog('');
+  }
+  if (typeof args[0] === 'string' && args[0].includes('[Owner:')) {
+    return originalLog(...args);
   }
   originalLog(logPrefix, ...args);
 };
 console.warn = (...args) => {
-  if (args.length > 0 && typeof args[0] === 'string' && args[0].includes('[Owner:')) return originalWarn(...args);
+  if (args.length === 0 || (args.length === 1 && args[0] === '')) {
+    return originalWarn('');
+  }
+  if (typeof args[0] === 'string' && args[0].includes('[Owner:')) {
+    return originalWarn(...args);
+  }
   originalWarn(logPrefix, ...args);
 };
 console.error = (...args) => {
-  if (args.length > 0 && typeof args[0] === 'string' && args[0].includes('[Owner:')) return originalError(...args);
+  if (args.length === 0 || (args.length === 1 && args[0] === '')) {
+    return originalError('');
+  }
+  if (typeof args[0] === 'string' && args[0].includes('[Owner:')) {
+    return originalError(...args);
+  }
   originalError(logPrefix, ...args);
 };
 // -----------------------------
