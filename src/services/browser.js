@@ -438,8 +438,8 @@ export async function initBrowser(userDataDir = USER_DATA_DIR) {
 
     console.log('[Session] ✅ Browser initialized.');
 
-    // Start session logging upon successful browser init
-    sessionLogger.startNewSession();
+    // Start session logging upon successful browser init (counters only, no rotation)
+    sessionLogger.startNewSession(false);
 
     return globalContext;
   } catch (error) {

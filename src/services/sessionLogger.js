@@ -9,21 +9,22 @@ class SessionLogger {
     this.globalApiCount = 0;
     this.taskApiCounts = new Map();
     this.forcePositiveTasks = new Set();
+    this._handlersRegistered = false;
 
     if (!fs.existsSync(this.logDir)) {
-      fs.mkdirSync(this.logDir, { recursive: true });
+      try {
+        fs.mkdirSync(this.logDir, { recursive: true });
+      } catch (e) {
+        console.error(`[SessionLogger] Failed to create logs directory: ${e.message}`);
+      }
     }
+
+    // Early Initialization: Create files immediately so startup errors are captured
+    this._initFileNames();
+    this._registerGlobalHandlers();
   }
 
-  /**
-   * Скидає лічильники та генерує нові назви файлів логів (Позитивний та Негативний).
-   * Викликається після успішної ініціалізації браузера.
-   */
-  startNewSession() {
-    this.globalApiCount = 0;
-    this.taskApiCounts.clear();
-    this.forcePositiveTasks.clear();
-
+  _initFileNames() {
     const now = new Date();
     const day = String(now.getDate()).padStart(2, '0');
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -32,13 +33,51 @@ class SessionLogger {
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const seconds = String(now.getSeconds()).padStart(2, '0');
 
-    // Формат: DD_MM_YYYY-HH-mm-ss (Windows-friendly)
     const timestamp = `${day}_${month}_${year}-${hours}-${minutes}-${seconds}`;
-
     this.positiveLogFile = path.join(this.logDir, `positive_${timestamp}.txt`);
     this.negativeLogFile = path.join(this.logDir, `negative_${timestamp}.txt`);
 
-    this.log('SUCCESS', { context: 'SYSTEM', message: 'Нова сесія розпочата. Лічильники скинуто. Створено роздільні файли логів.' });
+    // Create empty files to ensure they exist and are writable
+    try {
+      if (!fs.existsSync(this.positiveLogFile)) fs.writeFileSync(this.positiveLogFile, '', 'utf8');
+      if (!fs.existsSync(this.negativeLogFile)) fs.writeFileSync(this.negativeLogFile, '', 'utf8');
+    } catch (e) {
+      console.error(`[SessionLogger] Failed to create initial log files: ${e.message}`);
+    }
+  }
+
+  _registerGlobalHandlers() {
+    if (this._handlersRegistered) return;
+
+    process.on('uncaughtException', (error) => {
+      this.log('ERROR', { context: 'CRITICAL', message: 'Uncaught Exception Detected' }, error);
+    });
+
+    process.on('unhandledRejection', (reason) => {
+      const error = reason instanceof Error ? reason : new Error(String(reason));
+      this.log('ERROR', { context: 'CRITICAL', message: 'Unhandled Promise Rejection' }, error);
+    });
+
+    this._handlersRegistered = true;
+  }
+
+  /**
+   * Скидає лічильники. Опціонально генерує нові назви файлів.
+   * @param {boolean} rotate - Чи створювати нові файли логів.
+   */
+  startNewSession(rotate = false) {
+    this.globalApiCount = 0;
+    this.taskApiCounts.clear();
+    this.forcePositiveTasks.clear();
+
+    if (rotate) {
+      this._initFileNames();
+    }
+
+    this.log('SUCCESS', {
+      context: 'SYSTEM',
+      message: `Нова сесія розпочата${rotate ? ' (Створено нові файли)' : ' (Продовження запису)'}. Лічильники скинуто.`
+    });
   }
 
   /**
@@ -107,15 +146,19 @@ class SessionLogger {
       logLine += `\n[ERROR STACK]\n${error.stack || error}\n`;
     }
 
-    // Вивід у консоль
-    const consoleMethod = level === 'ERROR' ? console.error : (level === 'WARN' ? console.warn : console.log);
-    consoleMethod(logLine);
+    // Вивід у консоль (ВИМКНЕНО за запитом користувача - логи йдуть лише у файли)
+    // const consoleMethod = level === 'ERROR' ? console.error : (level === 'WARN' ? console.warn : console.log);
+    // consoleMethod(logLine);
 
     // Запис у відповідний файл
     let targetFile = null;
-    if (level === 'SUCCESS' || level === 'INFO' || (taskId && this.forcePositiveTasks.has(taskId))) {
+
+    // ПРІОРИТЕТ: Якщо завдання в активній фазі викупу (після TARGET DETECTED)
+    if (taskId && this.forcePositiveTasks.has(taskId)) {
       targetFile = this.positiveLogFile;
-    } else if (level === 'ERROR' || level === 'WARN') {
+    } else {
+      // ВСЕ ІНШЕ (моніторинг hunting, системні повідомлення, помилки поза викупом) -> у negative.
+      // Це дозволяє тримати positive файл чистим від логів очікування (hunting mode).
       targetFile = this.negativeLogFile;
     }
 
@@ -135,7 +178,24 @@ class SessionLogger {
    */
   promoteToPositive(taskId) {
     if (taskId) {
-      this.forcePositiveTasks.add(taskId.toString());
+      const taskIdStr = taskId.toString();
+      // Обов'язково додаємо візуальне розділення (2 пустих рядки) при КОЖНІЙ новій детекції
+      if (this.positiveLogFile) {
+        try {
+          fs.appendFileSync(this.positiveLogFile, '\n\n', 'utf8');
+        } catch (e) { }
+      }
+      this.forcePositiveTasks.add(taskIdStr);
+    }
+  }
+
+  /**
+   * Знімає позначку примусового логування в positive файл.
+   * @param {string} taskId 
+   */
+  demote(taskId) {
+    if (taskId) {
+      this.forcePositiveTasks.delete(taskId.toString());
     }
   }
 }

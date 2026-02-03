@@ -211,6 +211,9 @@ export function getTaskPage(taskId) {
 export async function fullRestart(telegramBot) {
   console.error('[Watchdog] 🚨 INITIATING FULL GLOBAL RESTART...');
 
+  // 0. Rotate logs for the new "life "
+  sessionLogger.startNewSession(true);
+
   // 1. Notify Owners
   const ownerIdFull = process.env.OWNER_ID || '';
   const owners = ownerIdFull.split(',').map(id => id.trim()).filter(id => id);
@@ -1015,6 +1018,7 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
         if (page) await page.close().catch(() => { });
         activePages.delete(taskId.toString());
 
+        sessionLogger.demote(taskId); // Stop forcing to positive only AFTER cleanup and final logs
         throw new Error('Item Sold Out in Cart');
       }
     } catch (e) {
@@ -1044,6 +1048,11 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
     logger.log('[Checkout] Entering Unified State Machine Loop...');
 
     while (!authorized && attempts < MAX_ATTEMPTS) {
+      if (!page || page.isClosed()) {
+        logger.error('[Checkout] Aborting checkout loop: Page is closed.');
+        break;
+      }
+
       attempts++;
       let actionTaken = false;
 
@@ -1193,6 +1202,13 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
         }
 
       } catch (e) {
+        const isClosed = e.message.includes('closed') || e.message.includes('Target page, context or browser has been closed');
+
+        if (isClosed) {
+          logger.error(`[Checkout] Critical Error: Browser context closed during checkout. Exiting loop.`);
+          break; // EXIT LOOP IMMEDIATELY
+        }
+
         logger.warn(`[Checkout] Loop Error (Attempt ${attempts}): ${e.message}`);
         await delay(1000); // Backoff
       }
@@ -1220,17 +1236,19 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
     if (cardCvv) {
       const startTime = Date.now();
       while (Date.now() - startTime < 5000) {
+        if (!page || page.isClosed()) break;
         try {
           let cvvField = null;
           let targetFrame = page;
 
           // Check main page
-          cvvField = await page.$('[data-qa-id="payment-data.CARD_CVV"]');
+          cvvField = await page.$('[data-qa-id="payment-data.CARD_CVV"]').catch(() => null);
           if (!cvvField) {
             // Check frames
             for (const frame of page.frames()) {
+              if (frame.isDetached()) continue;
               try {
-                cvvField = await frame.$('[data-qa-id="payment-data.CARD_CVV"]');
+                cvvField = await frame.$('[data-qa-id="payment-data.CARD_CVV"]').catch(() => null);
                 if (cvvField) {
                   targetFrame = frame;
                   break;
@@ -1356,6 +1374,8 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
           });
           logger.success(`[Checkout] ✅ Task marked as COMPLETED. Awaiting bank confirmation. ${durationMsg}`);
           console.log(`[Success] Всі скріншоти надіслано, викуп ініційовано для завдання ${taskId}. ${durationMsg}`);
+
+          sessionLogger.demote(taskId); // Stop forcing to positive AFTER success log
 
           return;
         } else {
@@ -1619,8 +1639,8 @@ async function sniperLoop(task, telegramBot, logger) {
                   isSkuValidated = true;
 
                   if (targetSku.availability === 'in_stock' || targetSku.availability === 'low_stock') {
-                    logger.success(`[API Hunter] 🎯 TARGET DETECTED! SKU: ${task.skuId} is ${targetSku.availability}`);
                     sessionLogger.promoteToPositive(task._id); // Force all logs for this task to positive from now on
+                    logger.success(`[API Hunter] 🎯 TARGET DETECTED! SKU: ${task.skuId} is ${targetSku.availability}`);
                     detectedAvailability = targetSku.availability; // Capture status for priority
                     apiFound = true;
                     break; // EXIT API LOOP -> GO TO BROWSER
@@ -1936,6 +1956,9 @@ async function sniperLoop(task, telegramBot, logger) {
           // Revert to hunting on error
           await SniperTask.findByIdAndUpdate(task._id, { status: 'hunting' });
           task.status = 'hunting';
+
+          // Technical error log (likely already fired earlier, but ensuring routing)
+          sessionLogger.demote(task._id); // Stop forcing to positive only after we are back to hunting
         }
       }
 

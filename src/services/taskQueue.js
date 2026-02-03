@@ -2,6 +2,7 @@ import SniperTask from '../models/SniperTask.js';
 import User from '../models/User.js';
 import { parseProductOptions } from './zaraParser.js';
 import { getBotId } from '../utils/botUtils.js';
+import sessionLogger from './sessionLogger.js';
 
 
 /**
@@ -32,21 +33,30 @@ class TaskQueue {
         if (!line) return '';
         return `[Task ${taskId}] [${timeObj.timeStr}] [+${timeObj.delta}s] ${line}`;
       },
-      _logTo(originalFn, message) {
+      _logTo(originalFn, message, level = 'INFO') {
         const timeObj = this._getDuration();
         const lines = String(message).split('\n');
         lines.forEach(line => {
           if (line.trim() === '') {
             originalFn('');
           } else {
-            originalFn(this._formatLine(line, timeObj));
+            // Bridge to SessionLogger (File-based durable logging)
+            // Console output is disabled for tasks as per user request to keep console clean
+            sessionLogger.log(level, {
+              taskId,
+              context: 'TASK',
+              message: line
+            });
           }
         });
       },
-      log: function (message) { this._logTo(console.log, message); },
-      error: function (message) { this._logTo(console.error, message); },
-      success: function (message) { this._logTo(console.log, `✅ ${message}`); },
-      warn: function (message) { this._logTo(console.warn, message); }
+      log: function (message) { this._logTo(console.log, message, 'INFO'); },
+      error: function (message, error = null) {
+        this._logTo(console.error, message, 'ERROR');
+        if (error) sessionLogger.log('ERROR', { taskId, context: 'TASK', message: 'Error Stack Trace' }, error);
+      },
+      success: function (message) { this._logTo(console.log, `✅ ${message}`, 'SUCCESS'); },
+      warn: function (message) { this._logTo(console.warn, message, 'WARN'); }
     };
     this.loggers.set(taskId.toString(), logger);
     return logger;
