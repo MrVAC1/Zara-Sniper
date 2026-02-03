@@ -140,11 +140,17 @@ async function humanClick(page, selector) {
 
 async function typeWithJitter(page, selector, text) {
   try {
+    // Humanization: Delay before starting to type (Thinking time)
+    await new Promise(r => setTimeout(r, randomDelay(2000, 4000)));
+
     await page.focus(selector);
     for (const char of text) {
       await page.keyboard.type(char);
-      await new Promise(r => setTimeout(r, randomDelay(50, 150)));
+      // Humanization: Slower typing speed (100-150ms per key)
+      await new Promise(r => setTimeout(r, randomDelay(100, 150)));
     }
+    // Humanization: Delay after typing
+    await new Promise(r => setTimeout(r, randomDelay(500, 1000)));
   } catch (e) {
     console.warn(`[Stealth] Typing failed for ${selector}: ${e.message}`);
     await page.fill(selector, text);

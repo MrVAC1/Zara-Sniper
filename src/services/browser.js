@@ -361,9 +361,8 @@ export async function initBrowser(userDataDir) {
     try {
       fingerprint = fingerprintGenerator.getFingerprint({
         devices: ['desktop'],
-        operatingSystems: [IS_MAC ? 'macos' : 'windows'],
-        browsers: [{ name: 'chrome', minVersion: 120 }], // Target modern Chrome
-        screen: { minWidth: 1366, minHeight: 768, maxWidth: 3840, maxHeight: 2160 },
+        operatingSystems: ['windows'],
+        browsers: [{ name: 'chrome', minVersion: 115 }], // Target modern Chrome
       });
 
       // safeRetries is internal to the generator logic mostly, but we validate the output here directly.
@@ -821,5 +820,25 @@ async function applyStealthScripts(context) {
         Promise.resolve({ state: Notification.permission }) :
         originalQuery(parameters)
     );
+
+    // --- LAYER 2: WebGL & Hardware Spoofing (For HF/Cloud) ---
+    const getParameter = WebGLRenderingContext.prototype.getParameter;
+    WebGLRenderingContext.prototype.getParameter = function (parameter) {
+      // Spoof Vendor
+      if (parameter === 37445) {
+        return 'Google Inc. (NVIDIA)';
+      }
+      // Spoof Renderer (Akamai Check)
+      if (parameter === 37446) {
+        return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 Direct3D11 vs_5_0 ps_5_0)';
+      }
+      return getParameter.apply(this, arguments);
+    };
+
+    // Mask Hardware
+    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 }); // Mimic 8-core CPU
+    Object.defineProperty(navigator, 'deviceMemory', { get: () => 16 }); // Mimic 16GB RAM
+    Object.defineProperty(navigator, 'platform', { get: () => 'Win32' }); // Mimic Windows Platform
+    // ---------------------------------------------------------
   });
 }
