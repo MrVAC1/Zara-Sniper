@@ -33,15 +33,27 @@ const { GOTO_TIMEOUT } = getTimeConfig();
 
 dotenv.config();
 
-// --- SSL CERTIFICATE SETUP ---
-const sslCertPath = path.join(process.cwd(), 'brightdata_proxy.crt');
-if (fs.existsSync(sslCertPath)) {
-  process.env.NODE_EXTRA_CA_CERTS = sslCertPath;
-  console.log(`[System] 🛡️ Loaded custom SSL certificate: ${sslCertPath}`);
+// --- SSL CERTIFICATE RESTORATION ---
+if (process.env.SSL_CERT_BASE64) {
+  try {
+    const certBuffer = Buffer.from(process.env.SSL_CERT_BASE64, 'base64');
+    const certPath = path.resolve('./brightdata_proxy.crt');
+    fs.writeFileSync(certPath, certBuffer);
+    process.env.NODE_EXTRA_CA_CERTS = certPath;
+    console.log('✅ [KBM Logic] SSL Certificate restored and NODE_EXTRA_CA_CERTS set.');
+  } catch (err) {
+    console.error('❌ [System] SSL Restoration failed:', err.message);
+  }
 } else {
-  console.warn(`[System] ⚠️ SSL certificate not found at ${sslCertPath}`);
+  const sslCertPath = path.join(process.cwd(), 'brightdata_proxy.crt');
+  if (fs.existsSync(sslCertPath)) {
+    process.env.NODE_EXTRA_CA_CERTS = sslCertPath;
+    console.log(`[System] 🛡️ Loaded custom SSL certificate: ${sslCertPath}`);
+  } else {
+    // console.warn(`[System] ⚠️ SSL certificate not found at ${sslCertPath}`);
+  }
 }
-// -----------------------------
+// -----------------------------------
 
 // --- GLOBAL LOGGING PREFIX ---
 const ownerLogId = process.env.OWNER_ID ? process.env.OWNER_ID.split(',')[0].trim() : 'System';
