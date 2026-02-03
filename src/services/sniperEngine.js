@@ -833,218 +833,183 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
     }
     // ------------------------
 
-    // Step 2: Shipping / Payment Flow
-    // Try to click "Continue" buttons to reach payment
-    const continueSelectors = [
-      'button[data-qa-action="continue"]',
-      'button:has-text("Continue")',
-      'button:has-text("Продовжити")',
-      'button:has-text("Далі")'
-    ];
+    // --- UNIFIED CHECKOUT STATE MACHINE ---
+    // Combined selectors for all possible forward actions
+    const actionSelectors = {
+      checkout: 'button[class*="checkout"], button[data-testid*="checkout"], button:has-text("Checkout"), button:has-text("Process order")',
+      continue: 'button[data-qa-action="continue"], button:has-text("Continue"), button:has-text("Продовжити"), button:has-text("Далі")',
+      pay: '[data-qa-action="pay-order"], .payment-footer__pay-button-content, button:has-text("Authorize Payment"), button:has-text("Оплатити"), button[form="payment-form"]',
+      cvv: '[data-qa-id="payment-data.CARD_CVV"], input[name="payment-data.CARD_CVV"], #cvv',
+      login: 'a[data-qa-id="logon-google"]' // Special case
+    };
 
-    const combinedContinue = continueSelectors.join(', ');
+    const combinedSelector = Object.values(actionSelectors).join(', ');
 
-    for (let i = 0; i < 5; i++) {
-      let clickedInTerm = false;
-
-      try {
-        // 1. Login check once per step
-        // Wrap checking in try-catch for destroyed context
-        try {
-          if (!page || page.isClosed()) throw new Error('Page closed');
-          if (await isLoginPage(page)) throw new Error('Login Redirect during flow');
-        } catch (e) {
-          if (e.message.includes('context was destroyed') || e.message.includes('Target closed')) {
-            logger.warn(`[Checkout] Context lost check. Waiting 1s...`);
-            await delay(1000);
-            if (page && !page.isClosed()) continue; // Restart loop iteration
-          }
-        }
-
-        // 1.5 Special Check for Google Login Re-auth
-        const googleLoginBtn = await page.$('a[data-qa-id="logon-google"]');
-        if (googleLoginBtn) {
-          logger.warn('[Checkout] ⚠️ Google Login prompt detected!');
-
-          const loginPath = `screenshots/google-login-${taskId}-${Date.now()}.png`;
-          await page.screenshot({ path: loginPath, fullPage: true }).catch(() => { });
-
-          if (telegramBot && finalChatId) {
-            telegramBot.telegram.sendPhoto(finalChatId, { source: loginPath }, {
-              caption: '⚠️ <b>Google Login Detected!</b>\nБот намагається увійти автоматично...',
-              parse_mode: 'HTML'
-            }).catch(() => { });
-          }
-
-          await googleLoginBtn.click({ force: true });
-          logger.log('[Checkout] Clicked Google Login. Waiting for redirect...');
-          await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => { });
-          continue; // Restart loop to check for next buttons
-        }
-
-        // 2. Wait for ANY of the "Continue" buttons to appear
-        const btn = await page.waitForSelector(combinedContinue, {
-          visible: true,
-          timeout: 2000
-        }).catch(() => null);
-
-        if (btn) {
-          try {
-            await btn.click({ force: true });
-
-            // FIX: Wait for navigation to stabilize!
-            await page.waitForLoadState('domcontentloaded', { timeout: 2000 }).catch(() => { });
-
-            logger.log(`[Checkout] Clicked Continue (Step ${i + 1})`);
-            clickedInTerm = true;
-
-            // 3. Handle Out-of-Stock Modal (specifically on first step)
-            if (i === 0) {
-              const closeModalBtn = await page.waitForSelector('[data-qa-id="close-modal"]', { timeout: TIMEOUT_MODAL_CHECK }).catch(() => null);
-              if (closeModalBtn) {
-                logger.warn('[Checkout] Виявлено модальне вікно (продано). Закриваю та повторюю...');
-                await closeModalBtn.click({ force: true });
-                await delay(DELAY_FAST_BACKTRACK);
-                // Retry the click on the same page
-                const retryBtn = await page.$(combinedContinue);
-                if (retryBtn) await retryBtn.click({ force: true }).catch(() => { });
-                // Wait again after interaction
-                await page.waitForLoadState('domcontentloaded', { timeout: 2000 }).catch(() => { });
-              }
-            }
-          } catch (clickError) {
-            if (clickError.message.includes('context was destroyed')) {
-              logger.warn(`[Checkout] Context destroyed during click (Step ${i + 1}). Waiting 1s...`);
-              await delay(1000);
-              // If clicked but context died, it usually means navigation happened. 
-              // We consider this 'clickedInTerm = true' effectively or let next loop handle it?
-              // Safer to process next loop iteration naturally.
-              clickedInTerm = true;
-            } else {
-              throw clickError;
-            }
-          }
-
-          await delay(DELAY_CHECKOUT_STEP);
-        }
-      } catch (e) {
-        if (e.message.includes('context was destroyed')) {
-          logger.warn(`[Checkout] Global Step ${i + 1} Context Error. Retrying step via loop...`);
-          await delay(1000);
-          i--; // Retry this step index!
-          continue;
-        }
-        logger.warn(`[Checkout] Step ${i + 1} warning: ${e.message}`);
-      }
-
-      if (!clickedInTerm) {
-        if (i < 2) {
-          logger.warn(`[Checkout] Loop ${i + 1}: Кнопку не знайдено. Пробую натиснути попередню через ${DELAY_FAST_BACKTRACK}мс...`);
-          await delay(DELAY_FAST_BACKTRACK);
-        }
-
-        if (i === 1) { // Critical failure on 2nd step
-          await reportError(page, new Error('Checkout Flow Interrupted: Buttons Missing'), 'Checkout Step 2');
-
-          await SniperTask.findByIdAndUpdate(taskId, { status: 'hunting' });
-          if (page) await page.close().catch(() => { });
-          activePages.delete(taskId.toString());
-          throw new Error('Checkout Flow Interrupted: Buttons Missing');
-        }
-      }
-    }
-
-    // ----------------------------
-
-    // --- SEQUENTIAL PAYMENT FLOW ---
-    const authBtnSelector = '[data-qa-action="pay-order"], .payment-footer__pay-button-content, button:has-text("Authorize Payment"), button:has-text("Оплатити")';
-    const formBtnSelector = 'button[form="payment-form"]';
-
-    // --- SMART STEP A: Final Authorization / Smart Button Loop ---
-    // We combine selectors to act instantly on whatever appears (Continue OR Pay OR CVV)
-    const authSelector = '[data-qa-action="pay-order"], .payment-footer__pay-button-content, button:has-text("Authorize Payment"), button:has-text("Оплатити")';
-    const anyContinueSelector = 'button[data-qa-action="continue"], button:has-text("Continue"), button:has-text("Продовжити"), button:has-text("Далі")';
-    const cvvSelector = '[data-qa-id="payment-data.CARD_CVV"], input[name="payment-data.CARD_CVV"], #cvv'; // Added common CVV selectors
-
-    // Combined selector for race
-    const smartSelector = `${authSelector}, ${anyContinueSelector}, ${cvvSelector}`;
-
-    logger.log('[Checkout] Entering Smart Button Loop (Pay, Continue, or CVV)...');
+    let lastActionSelector = null; // To track "Previous Action"
     let authorized = false;
     let smartCvvFilled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 20; // Allow enough steps for full flow
 
-    // We give it a few attempts to navigate any final intermediate steps
-    for (let attempt = 0; attempt < 8; attempt++) { // Increased attempts for complex flows
+    logger.log('[Checkout] Entering Unified State Machine Loop...');
+
+    while (!authorized && attempts < MAX_ATTEMPTS) {
+      attempts++;
+      let actionTaken = false;
+
       try {
-        // Wait for EITHER button or CVV
-        const foundEl = await page.waitForSelector(smartSelector, {
-          visible: true,
-          timeout: TIMEOUT_PAY_BUTTON + 2500 // 5.5s wait
-        });
+        // 1. Check for Login Redirect (Critical Guard)
+        if (await isLoginPage(page)) {
+          throw new Error('Login Redirect during flow');
+        }
 
-        if (!foundEl) throw new Error('No checkout elements found');
+        // 2. Wait for ANY forward button (Timeout: 2.5s)
+        // If we clicked something previously, we expect a new button.
+        // If nothing appears, we might need to RETRY the previous button.
 
-        // Determine which one it is
+        let foundEl = null;
+        try {
+          foundEl = await page.waitForSelector(combinedSelector, {
+            visible: true,
+            timeout: 3000
+          });
+        } catch (waitErr) {
+          // TIMEOUT: No button found. 
+          // HERE IS THE LOGIC: If next button missing -> Click Previous again.
+          if (lastActionSelector) {
+            logger.warn(`[Checkout] Next step button missing. Retrying PREVIOUS action: ${lastActionSelector}...`);
+            // Retry previous
+            const prevEl = await page.$(lastActionSelector);
+            if (prevEl && await prevEl.isVisible()) {
+              await prevEl.click({ force: true });
+              logger.log(`[Checkout] 🔄 Retried Previous Action.`);
+              await delay(DELAY_FAST_BACKTRACK);
+              // Check for modal after retry
+              const modal = await page.$('[data-qa-id="popup-modal"]');
+              if (modal) {
+                // Sometimes a modal blocks progress (e.g. "Select address")
+                // We might need logic here, but for now just logging.
+                logger.warn('[Checkout] Modal detected after retry.');
+              }
+              continue; // Loop again to see if new button appears
+            } else {
+              logger.warn(`[Checkout] Previous button ${lastActionSelector} is no longer visible.`);
+            }
+          } else {
+            logger.warn('[Checkout] No buttons found and no previous action to retry.');
+          }
+        }
+
+        if (!foundEl) {
+          // If we didn't retry (or retry failed to produce new button), we might be stuck.
+          // Allow loop to continue a bit or break? 
+          // Let's continue, maybe it appears later.
+          if (attempts > 5 && !lastActionSelector) break; // Give up if stuck at start
+          continue;
+        }
+
+        // 3. Determine Action Type
         const elType = await foundEl.evaluate((el) => {
           const text = (el.innerText || '').toLowerCase();
           const action = el.getAttribute('data-qa-action');
           const tagName = el.tagName.toLowerCase();
           const qaId = el.getAttribute('data-qa-id');
+          const testId = el.getAttribute('data-testid');
+          const href = el.getAttribute('href');
 
+          if (tagName === 'a' && qaId === 'logon-google') return 'login';
           if (tagName === 'input' || (qaId && qaId.includes('CVV'))) return 'cvv';
           if (text.includes('pay') || text.includes('оплатити') || text.includes('authorize') || action === 'pay-order') return 'pay';
-          return 'continue';
+          if (action === 'continue' || text.includes('continue') || text.includes('продовжити')) return 'continue';
+          if (action === 'check-out' || (testId && testId.includes('checkout')) || text.includes('checkout')) return 'continue'; // Treat checkout start as continue
+
+          return 'unknown';
         });
 
+        // 4. Execute Action
+        if (elType === 'login') {
+          // Google Login Handling
+          logger.warn('[Checkout] ⚠️ Google Login prompt detected!');
+          await foundEl.click({ force: true });
+          await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => { });
+          continue; // Restart loop
+        }
+
         if (elType === 'cvv') {
-          if (smartCvvFilled) {
-            // Already filled, maybe just wait a bit or looking for button
-            await delay(500);
-            continue;
-          }
-          logger.log(`[Checkout] Smart Action: Found Inline CVV. Filling...`);
-          const cardCvv = process.env.CARD_CVV;
-          if (cardCvv) {
+          if (!smartCvvFilled && process.env.CARD_CVV) {
+            logger.log(`[Checkout] Found CVV. Filling...`);
             await foundEl.click();
-            await delay(200);
-            await foundEl.type(cardCvv);
-            await delay(500);
+            await foundEl.type(process.env.CARD_CVV);
             smartCvvFilled = true;
-            logger.success(`[Checkout] ✅ Inline CVV Filled.`);
-            // Loop continues to find the Pay button now
-          } else {
-            logger.warn(`[Checkout] CVV found but CARD_CVV is missing in env!`);
+            logger.success(`[Checkout] ✅ CVV Filled.`);
+            await delay(500);
+            // Don't set lastActionSelector for CVV, as we don't want to "retry" typing CVV blindly
           }
-          continue;
-
-        } else if (elType === 'pay') {
-          // Found Pay Button!
-          await foundEl.click({ force: true });
-          logger.success('[Checkout] ✅ Clicked Authorize Payment (Smart Action).');
-          await delay(DELAY_WATCH_LOOP);
-          authorized = true;
-          break; // EXIT LOOP, WE ARE DONE
-
-        } else { // elType === 'continue'
-          // Found Continue Button
-          logger.log(`[Checkout] Smart Action: Clicked 'Continue' (Attempt ${attempt + 1})`);
-          await foundEl.click({ force: true });
-
-          // Short pause to allow UI transition before looking again
-          await delay(DELAY_CHECKOUT_STEP);
           continue;
         }
 
+        if (elType === 'pay') {
+          logger.log('[Checkout] Found PAY button. Authorizing...');
+          await foundEl.click({ force: true });
+
+          // Check if this opened a CVV modal (per User report)
+          // We wait a moment and see if CVV selector becomes visible
+          try {
+            const cvvAppeared = await page.waitForSelector(actionSelectors.cvv, { timeout: 2000, state: 'visible' }).catch(() => null);
+            if (cvvAppeared) {
+              logger.warn('[Checkout] Pay button opened CVV Modal. Continuing loop to fill it...');
+              await delay(500);
+              continue; // DO NOT BREAK. Go back to start of loop to handle CVV.
+            }
+          } catch (e) { }
+
+          logger.success('[Checkout] ✅ Clicked Authorize Payment (Final).');
+          authorized = true;
+
+          // Wait for redirect
+          await delay(DELAY_WATCH_LOOP);
+          break; // Exit loop!
+        }
+
+        if (elType === 'continue') {
+          logger.log(`[Checkout] Step ${attempts}: Clicked 'Continue/Checkout'`);
+          await foundEl.click({ force: true });
+
+          // SAVE THIS SELECTOR AS PREVIOUS ACTION
+          // We need a specific selector to find it again.
+          // We can use a generic one or try to be specific.
+          // To be robust, we use the GENERIC type selector that found it.
+          lastActionSelector = actionSelectors.continue;
+          if (await page.$(actionSelectors.checkout)) lastActionSelector = actionSelectors.checkout;
+          // Ideally we'd store the specific selector that matched, but we used combined.
+          // Let's update lastAction more smartly if possible. 
+          // For now, defaulting to the 'continue' group is safe as they are usually mutually exclusive per page.
+
+          // Handle Modal on first step (Out of stock)
+          if (attempts === 1) {
+            const closeModal = await page.waitForSelector('[data-qa-id="close-modal"]', { timeout: 1000 }).catch(() => null);
+            if (closeModal) {
+              logger.warn('[Checkout] Modal blocked click. Closing and Retrying...');
+              await closeModal.click();
+              await delay(500);
+              // The loop will retry naturally via "Retry Previous" logic? 
+              // No, we just clicked. If we loop, we will look for NEXT. 
+              // If NEXT missing, we retry THIS. Perfect.
+            }
+          }
+
+          await delay(DELAY_CHECKOUT_STEP);
+          actionTaken = true;
+        }
+
       } catch (e) {
-        logger.warn(`[Checkout] Smart Loop attempt ${attempt + 1} warning: ${e.message}`);
-        await delay(DELAY_FAST_BACKTRACK);
+        logger.warn(`[Checkout] Loop Error (Attempt ${attempts}): ${e.message}`);
+        await delay(1000); // Backoff
       }
     }
 
     if (!authorized) {
-      // If we finished loop without clicking Pay
-      logger.error('[Checkout] Critical: Authorize button never reached or clicked.');
-      // Removed Telegram notification here as requested ("Smart Loop failed")
+      logger.error('[Checkout] Critical: Loop finished but Payment not authorized.');
     }
 
     // Step B: Form Modal Trigger (if needed)
