@@ -33,7 +33,7 @@ class TaskQueue {
         if (!line) return '';
         return `[Task ${taskId}] [${timeObj.timeStr}] [+${timeObj.delta}s] ${line}`;
       },
-      _logTo(originalFn, message, level = 'INFO') {
+      _logTo(originalFn, message, level = 'INFO', skipFile = false) {
         const timeObj = this._getDuration();
         const lines = String(message).split('\n');
         lines.forEach(line => {
@@ -47,18 +47,19 @@ class TaskQueue {
             sessionLogger.log(level, {
               taskId,
               context: 'TASK',
-              message: line
+              message: line,
+              skipFile // Pass skipFile flag
             });
           }
         });
       },
-      log: function (message) { this._logTo(console.log, message, 'INFO'); },
+      log: function (message, skipFile = false) { this._logTo(console.log, message, 'INFO', skipFile); },
       error: function (message, error = null) {
-        this._logTo(console.error, message, 'ERROR');
+        this._logTo(console.error, message, 'ERROR', false); // Errors never skip file
         if (error) sessionLogger.log('ERROR', { taskId, context: 'TASK', message: 'Error Stack Trace' }, error);
       },
-      success: function (message) { this._logTo(console.log, `✅ ${message}`, 'SUCCESS'); },
-      warn: function (message) { this._logTo(console.warn, message, 'WARN'); }
+      success: function (message, skipFile = false) { this._logTo(console.log, `✅ ${message}`, 'SUCCESS', skipFile); },
+      warn: function (message, skipFile = false) { this._logTo(console.warn, message, 'WARN', skipFile); }
     };
     this.loggers.set(taskId.toString(), logger);
     return logger;
@@ -96,7 +97,7 @@ class TaskQueue {
     const taskIdStr = taskId.toString();
     const logger = this.getLogger(taskId);
 
-    logger.log('Запуск виконання завдання');
+    logger.log('Запуск виконання завдання', true);
 
     const taskPromise = (async () => {
       try {

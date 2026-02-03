@@ -136,6 +136,7 @@ class SessionLogger {
     delete metadata.context;
     delete metadata.taskId;
     delete metadata.message;
+    delete metadata.skipFile; // Не записувати цей прапорець у файл
 
     if (Object.keys(metadata).length > 0) {
       logLine += ` | Data: ${JSON.stringify(metadata)}`;
@@ -161,9 +162,12 @@ class SessionLogger {
     if (taskId && this.forcePositiveTasks.has(taskId)) {
       targetFile = this.positiveLogFile;
     } else {
-      // ВСЕ ІНШЕ (моніторинг hunting, системні повідомлення, помилки поза викупом) -> у negative.
-      // Це дозволяє тримати positive файл чистим від логів очікування (hunting mode).
-      targetFile = this.negativeLogFile;
+      // ПЕРЕВІРКА НА ЗАБОРОНУ ЗАПИСУ: Routine hunting logs skip filling negative.txt
+      // Але ERROR та WARN (наприклад IP Block) завжди записуються.
+      const isRoutine = data.skipFile === true;
+      if (!isRoutine || level === 'ERROR' || level === 'WARN') {
+        targetFile = this.negativeLogFile;
+      }
     }
 
     if (targetFile) {
@@ -173,6 +177,21 @@ class SessionLogger {
         console.error(`[SessionLogger] Помилка запису у файл: ${fsErr.message}`);
       }
     }
+  }
+
+  /**
+   * Записує підсумок полювання для конкретного завдання.
+   * @param {string} taskId 
+   * @param {string} productName 
+   */
+  logSummary(taskId, productName) {
+    if (!taskId) return;
+    const count = this.taskApiCounts.get(taskId.toString()) || 0;
+    this.log('INFO', {
+      taskId,
+      context: 'SUMMARY',
+      message: `Підсумок полювання для "${productName}": Всього перевірок API: ${count}.`
+    });
   }
 
   /**

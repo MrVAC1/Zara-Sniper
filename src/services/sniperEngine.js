@@ -1546,7 +1546,7 @@ async function sniperLoop(task, telegramBot, logger) {
         // --------------------------
 
         activePages.set(task._id.toString(), page);
-        logger.log('Створено нову вкладку (waiting for trigger)');
+        logger.log('Створено нову вкладку (waiting for trigger)', true);
       } catch (e) {
         logger.error(`Не вдалося ініціалізувати сторінку: ${e.message}`);
         throw e;
@@ -1555,7 +1555,7 @@ async function sniperLoop(task, telegramBot, logger) {
 
     try {
       await initPage();
-      logger.log(`[Hybrid Sniper] Started for ${task.productName} [${task.selectedSize?.name}]`);
+      logger.log(`[Hybrid Sniper] Started for ${task.productName} [${task.selectedSize?.name}]`, true);
 
       while ((task.status === 'hunting' || task.status === 'processing') && attempts < task.maxAttempts) {
 
@@ -1563,10 +1563,10 @@ async function sniperLoop(task, telegramBot, logger) {
         let apiFound = false;
 
         if (task.status === 'processing') {
-          logger.log(`[Status] ⚡ Processing Mode: Skipping API Monitor -> Immediate Execution.`);
+          logger.log(`[Status] ⚡ Processing Mode: Skipping API Monitor -> Immediate Execution.`, true);
           apiFound = true;
         } else {
-          logger.log(`[Status] 📡 Entering API Monitoring Phase...`);
+          logger.log(`[Status] 📡 Entering API Monitoring Phase...`, true);
 
           while (task.status === 'hunting') {
             if (isSystemPaused()) {
@@ -1578,6 +1578,7 @@ async function sniperLoop(task, telegramBot, logger) {
               // 1. Check Task Status from DB (Heartbeat)
               const freshTask = await SniperTask.findById(task._id);
               if (!freshTask || freshTask.status !== 'hunting') {
+                sessionLogger.logSummary(task._id, task.productName);
                 task.status = freshTask ? freshTask.status : 'stopped';
                 break;
               }
@@ -1590,8 +1591,8 @@ async function sniperLoop(task, telegramBot, logger) {
               await apiSemaphore.acquire();
               let data;
               try {
-                // User Request: Log Task Index and Status together
-                logger.log(`[Status] 🔭 Monitoring Item ${taskIndex}/${huntingTasks.length}: ${task.productName}`);
+                // User Request: Log Task Index and Status together (skip file, console only)
+                logger.log(`[Status] 🔭 Monitoring Item ${taskIndex}/${huntingTasks.length}: ${task.productName}`, true);
 
                 data = await checkAvailability(storeId, productId, task.skuId, {
                   taskId: task._id,
@@ -1622,7 +1623,7 @@ async function sniperLoop(task, telegramBot, logger) {
                     // Fall through to normal repair logic below
                   } else {
                     // Still waiting - skip repair, just sleep
-                    if (attempts % 20 === 0) logger.log(`[Catalog Monitor] 💤 Still waiting for color "${task.selectedColor.name}" to appear in catalog...`);
+                    if (attempts % 20 === 0) logger.log(`[Catalog Monitor] 💤 Still waiting for color "${task.selectedColor.name}" to appear in catalog...`, true);
                     await delay(API_MONITORING_INTERVAL * 2); // Slow down polling
                     continue;
                   }
@@ -1639,6 +1640,7 @@ async function sniperLoop(task, telegramBot, logger) {
                   isSkuValidated = true;
 
                   if (targetSku.availability === 'in_stock' || targetSku.availability === 'low_stock') {
+                    sessionLogger.logSummary(task._id, task.productName); // Log final hunting count to negative file
                     sessionLogger.promoteToPositive(task._id); // Force all logs for this task to positive from now on
                     logger.success(`[API Hunter] 🎯 TARGET DETECTED! SKU: ${task.skuId} is ${targetSku.availability}`);
                     detectedAvailability = targetSku.availability; // Capture status for priority

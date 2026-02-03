@@ -56,18 +56,18 @@ export async function checkAvailability(storeId, productId, targetSkuId = null, 
 
         if (isDebug) {
             const out = context.logger ? context.logger : console;
-            out.log(`[DEBUG_API] URL: ${url}`);
-            out.log(`[DEBUG_API] Product ID: ${productId}`);
-            out.log(`[DEBUG_API] Time: ${duration}ms`);
+            out.log(`[DEBUG_API] URL: ${url}`, true);
+            out.log(`[DEBUG_API] Product ID: ${productId}`, true);
+            out.log(`[DEBUG_API] Time: ${duration}ms`, true);
 
-            if (context.color) out.log(`[DEBUG_API] Color: "${String(context.color).trim()}"`);
-            if (context.size) out.log(`[DEBUG_API] Size: "${String(context.size).trim()}"`);
+            if (context.color) out.log(`[DEBUG_API] Color: "${String(context.color).trim()}"`, true);
+            if (context.size) out.log(`[DEBUG_API] Size: "${String(context.size).trim()}"`, true);
 
             if (targetSkuId && data.skusAvailability) {
                 const targetSku = data.skusAvailability.find(s => s.sku == targetSkuId);
-                out.log(`[DEBUG_API] SKU Data: ${targetSku ? JSON.stringify(targetSku, null, 2) : 'SKU NOT FOUND IN RESPONSE'}`);
+                out.log(`[DEBUG_API] SKU Data: ${targetSku ? JSON.stringify(targetSku, null, 2) : 'SKU NOT FOUND IN RESPONSE'}`, true);
             } else {
-                out.log(`[DEBUG_API] Response: ${JSON.stringify(data, null, 2).substring(0, 500)}...`);
+                out.log(`[DEBUG_API] Response: ${JSON.stringify(data, null, 2).substring(0, 500)}...`, true);
             }
         }
 
@@ -81,7 +81,7 @@ export async function checkAvailability(storeId, productId, targetSkuId = null, 
                 console.log("Бот шукає SKU:", targetSkuId);
             } else {
                 const status = targetSku.availability;
-                if (!isDebug) console.log(`[HUNTING] SKU: ${targetSkuId} | Status: ${status} | ${duration}ms | ProductId: ${productId}`);
+                if (!isDebug) out.log(`[HUNTING] SKU: ${targetSkuId} | Status: ${status} | ${duration}ms | ProductId: ${productId}`, true);
             }
         }
 
