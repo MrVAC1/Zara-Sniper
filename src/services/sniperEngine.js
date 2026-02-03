@@ -1547,6 +1547,10 @@ async function sniperLoop(task, telegramBot, logger) {
 
         activePages.set(task._id.toString(), page);
         logger.log('Створено нову вкладку (waiting for trigger)', true);
+
+        // Handle regional redirect modal before starting monitoring
+        const { handleStoreRedirect } = await import('./browser.js');
+        await handleStoreRedirect(page);
       } catch (e) {
         logger.error(`Не вдалося ініціалізувати сторінку: ${e.message}`);
         throw e;

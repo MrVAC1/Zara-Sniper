@@ -274,6 +274,7 @@ export async function initBrowser(userDataDir = USER_DATA_DIR) {
       try {
         await page.goto('https://www.zara.com/ua/uk/', { waitUntil: 'domcontentloaded', timeout: 30000 });
         await new Promise(r => setTimeout(r, 2000)); // Wait for hydration
+        await handleStoreRedirect(page); // Handle modal after warmup navigation
       } catch (navErr) {
         console.warn(`[Session] Warm-up navigation failed: ${navErr.message}`);
       }
@@ -771,6 +772,22 @@ export async function closeAlerts(page) {
       } catch (e) { }
     }
   } catch (error) { }
+}
+
+/**
+ * Handles the "Stay in Store" redirect modal.
+ * @param {import('playwright').Page} page
+ */
+export async function handleStoreRedirect(page) {
+  try {
+    if (page.isClosed()) return;
+    const selector = '[data-qa-action="stay-in-store"]';
+    const btn = await page.$(selector);
+    if (btn && await btn.isVisible()) {
+      console.log('[Browser] 📍 "Stay in Store" modal detected, clicking...');
+      await btn.click().catch(() => { });
+    }
+  } catch (e) { }
 }
 
 export async function removeUIObstacles(page) {
