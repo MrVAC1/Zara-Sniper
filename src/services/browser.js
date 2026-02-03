@@ -211,15 +211,10 @@ export async function initBrowser(userDataDir) {
       console.log(`[Init] ⚠️ No Bright Data credentials found. Running Direct/Host connection.`);
     }
 
-    // Force Import: Clean user profile to force Playwright to use `storageState`
+    // PERSISTENCE FIX: Do NOT wipe userDataDir. Playwright needs it.
+    // Only warn if we are injecting over an existing profile
     if (sessionFilePath && fs.existsSync(userDataDir)) {
-      try {
-        console.log('[Session] 🧹 Force-cleaning User Data directory for fresh session import...');
-        fs.rmSync(userDataDir, { recursive: true, force: true });
-        // fs.mkdirSync(userDataDir, { recursive: true }); // Playwright will create it
-      } catch (e) {
-        console.warn('[Session] Cleanup warning:', e.message);
-      }
+      console.log('[Session] ℹ️ Injecting DB session into existing persistent profile...');
     }
 
     console.group('[Browser Init]');

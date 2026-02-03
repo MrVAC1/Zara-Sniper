@@ -837,8 +837,8 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
     // Combined selectors for all possible forward actions
     const actionSelectors = {
       checkout: 'button[class*="checkout"], button[data-testid*="checkout"], button:has-text("Checkout"), button:has-text("Process order")',
-      continue: 'button[data-qa-action="continue"], button:has-text("Continue"), button:has-text("Продовжити"), button:has-text("Далі")',
-      pay: '[data-qa-action="pay-order"], .payment-footer__pay-button-content, button:has-text("Authorize Payment"), button:has-text("Оплатити"), button[form="payment-form"]',
+      continue: 'button[data-qa-action="continue"], [data-qa-id="shop-continue"], button:has-text("Continue"), button:has-text("Продовжити"), button:has-text("Далі")',
+      pay: '.payment-footer__actions button[form="payment-form"], button[form="payment-form"], [data-qa-action="pay-order"], [data-qa-id="payment-footer__pay-button-contentsticky-footer.authorise"], .payment-footer__pay-button-content, button:has-text("Authorize Payment"), button:has-text("Оплатити")',
       cvv: '[data-qa-id="payment-data.CARD_CVV"], input[name="payment-data.CARD_CVV"], #cvv',
       login: 'a[data-qa-id="logon-google"]' // Special case
     };
@@ -863,48 +863,35 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
           throw new Error('Login Redirect during flow');
         }
 
-        // 2. Wait for ANY forward button (Timeout: 2.5s)
-        // If we clicked something previously, we expect a new button.
-        // If nothing appears, we might need to RETRY the previous button.
-
+        // 2. PRIORITY CHECK: Pay Button
+        // We look for the Pay button explicitly first to avoid clicking "Continue" if both are present.
         let foundEl = null;
+
         try {
-          foundEl = await page.waitForSelector(combinedSelector, {
-            visible: true,
-            timeout: 3000
-          });
+          // Priority Selector from User
+          const paySel = '.payment-footer__actions button[form="payment-form"], button[form="payment-form"]';
+          foundEl = await page.waitForSelector(paySel, { visible: true, timeout: 500 }).catch(() => null);
+
+          if (!foundEl) {
+            // Fallback to searching everything
+            foundEl = await page.waitForSelector(combinedSelector, { visible: true, timeout: 2500 });
+          }
         } catch (waitErr) {
-          // TIMEOUT: No button found. 
-          // HERE IS THE LOGIC: If next button missing -> Click Previous again.
+          // TIMEOUT: No button found.
           if (lastActionSelector) {
             logger.warn(`[Checkout] Next step button missing. Retrying PREVIOUS action: ${lastActionSelector}...`);
-            // Retry previous
             const prevEl = await page.$(lastActionSelector);
             if (prevEl && await prevEl.isVisible()) {
               await prevEl.click({ force: true });
               logger.log(`[Checkout] 🔄 Retried Previous Action.`);
               await delay(DELAY_FAST_BACKTRACK);
-              // Check for modal after retry
-              const modal = await page.$('[data-qa-id="popup-modal"]');
-              if (modal) {
-                // Sometimes a modal blocks progress (e.g. "Select address")
-                // We might need logic here, but for now just logging.
-                logger.warn('[Checkout] Modal detected after retry.');
-              }
-              continue; // Loop again to see if new button appears
-            } else {
-              logger.warn(`[Checkout] Previous button ${lastActionSelector} is no longer visible.`);
+              continue;
             }
-          } else {
-            logger.warn('[Checkout] No buttons found and no previous action to retry.');
           }
         }
 
         if (!foundEl) {
-          // If we didn't retry (or retry failed to produce new button), we might be stuck.
-          // Allow loop to continue a bit or break? 
-          // Let's continue, maybe it appears later.
-          if (attempts > 5 && !lastActionSelector) break; // Give up if stuck at start
+          if (attempts > 5 && !lastActionSelector) break;
           continue;
         }
 
@@ -915,60 +902,73 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
           const tagName = el.tagName.toLowerCase();
           const qaId = el.getAttribute('data-qa-id');
           const testId = el.getAttribute('data-testid');
-          const href = el.getAttribute('href');
+          const formAttr = el.getAttribute('form');
 
           if (tagName === 'a' && qaId === 'logon-google') return 'login';
           if (tagName === 'input' || (qaId && qaId.includes('CVV'))) return 'cvv';
-          if (text.includes('pay') || text.includes('оплатити') || text.includes('authorize') || action === 'pay-order') return 'pay';
+
+          if (
+            (formAttr === 'payment-form') ||
+            (qaId && qaId.includes('authorise')) ||
+            (qaId && qaId.includes('pay-button')) ||
+            text.includes('pay') || text.includes('оплатити') || text.includes('authorize') || action === 'pay-order'
+          ) return 'pay';
+
           if (action === 'continue' || text.includes('continue') || text.includes('продовжити')) return 'continue';
-          if (action === 'check-out' || (testId && testId.includes('checkout')) || text.includes('checkout')) return 'continue'; // Treat checkout start as continue
+          if (action === 'check-out' || (testId && testId.includes('checkout')) || text.includes('checkout')) return 'continue';
 
           return 'unknown';
         });
 
-        // 4. Execute Action
-        if (elType === 'login') {
-          // Google Login Handling
-          logger.warn('[Checkout] ⚠️ Google Login prompt detected!');
-          await foundEl.click({ force: true });
-          await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => { });
-          continue; // Restart loop
-        }
-
-        if (elType === 'cvv') {
-          if (!smartCvvFilled && process.env.CARD_CVV) {
-            logger.log(`[Checkout] Found CVV. Filling...`);
-            await foundEl.click();
-            await foundEl.type(process.env.CARD_CVV);
-            smartCvvFilled = true;
-            logger.success(`[Checkout] ✅ CVV Filled.`);
-            await delay(500);
-            // Don't set lastActionSelector for CVV, as we don't want to "retry" typing CVV blindly
-          }
-          continue;
-        }
-
+        // 4. Action Execution
         if (elType === 'pay') {
           logger.log('[Checkout] Found PAY button. Authorizing...');
-          await foundEl.click({ force: true });
+          await closeAlerts(page).catch(() => { });
 
-          // Check if this opened a CVV modal (per User report)
-          // We wait a moment and see if CVV selector becomes visible
+          const paySelector = '.payment-footer__actions button[form="payment-form"], button[form="payment-form"]'; // Specific
+
+          // CLICK LOGIC
+          await foundEl.scrollIntoViewIfNeeded().catch(() => { });
+          await page.evaluate((sel) => {
+            const btn = document.querySelector(sel) || document.querySelector('[form="payment-form"]');
+            if (btn) btn.click();
+          }, paySelector);
+
+          logger.log('[Checkout] Pay Clicked. Waiting for CVV Modal...');
+
+          // --- CVV ATOMIC HANDLING ---
           try {
-            const cvvAppeared = await page.waitForSelector(actionSelectors.cvv, { timeout: 2000, state: 'visible' }).catch(() => null);
-            if (cvvAppeared) {
-              logger.warn('[Checkout] Pay button opened CVV Modal. Continuing loop to fill it...');
+            const cvvSelector = '[data-qa-id="payment-data.CARD_CVV"]';
+            // Extended wait for CVV loop
+            const cvvField = await page.waitForSelector(cvvSelector, { visible: true, timeout: 5000 }).catch(() => null);
+
+            if (cvvField) {
+              logger.success('[Checkout] CVV Field appeared! Filling...');
+              await cvvField.click();
+              await cvvField.type(process.env.CARD_CVV || '000');
               await delay(500);
-              continue; // DO NOT BREAK. Go back to start of loop to handle CVV.
+
+              // Find CVV Submit / Confirm Button
+              // Often "Confirm" or "Pay" inside the modal
+              const modalSubmit = await page.waitForSelector('button[class*="submit"], button:has-text("Confirm")', { timeout: 2000 }).catch(() => null);
+              if (modalSubmit) {
+                await modalSubmit.click();
+                logger.success('[Checkout] CVV Submitted.');
+              } else {
+                // Try pressing Enter
+                await page.keyboard.press('Enter');
+              }
+            } else {
+              logger.warn('[Checkout] No CVV field appeared after Pay click.');
             }
-          } catch (e) { }
+          } catch (cvvErr) {
+            logger.error(`[Checkout] CVV Error: ${cvvErr.message}`);
+          }
+          // ---------------------------
 
-          logger.success('[Checkout] ✅ Clicked Authorize Payment (Final).');
           authorized = true;
-
-          // Wait for redirect
           await delay(DELAY_WATCH_LOOP);
-          break; // Exit loop!
+          break;
         }
 
         if (elType === 'continue') {
