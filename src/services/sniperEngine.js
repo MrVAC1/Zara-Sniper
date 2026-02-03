@@ -328,8 +328,9 @@ export async function fullRestart(telegramBot) {
 export function startGlobalWatchdog(telegramBot) {
   if (watchdogInterval) clearInterval(watchdogInterval);
 
-  const THRESHOLD_MS = 20000; // User requested 20s
-  console.log(`[Watchdog] 🐕 Global Activity Watchdog started (${THRESHOLD_MS / 1000}s threshold, 1s precision).`);
+  const THRESHOLD_MS = 30000; // 30 seconds as requested
+  const CHECK_INTERVAL_MS = 5000; // Check every 5 seconds
+  console.log(`[Watchdog] 🐕 Global Activity Watchdog started (${THRESHOLD_MS / 1000}s threshold, ${CHECK_INTERVAL_MS / 1000}s check interval).`);
 
   watchdogInterval = setInterval(async () => {
     try {
@@ -342,14 +343,26 @@ export function startGlobalWatchdog(telegramBot) {
       if (huntingTasksCount > 0) {
         const inactiveTime = Date.now() - lastGlobalActivity;
 
-        // Log if halfway to threshold
-        if (inactiveTime > 10000 && Math.floor(inactiveTime / 1000) % 5 === 0) {
-          console.log(`[Watchdog] ⚠️ Warning: No activity for ${Math.round(inactiveTime / 1000)}s (Restart at ${THRESHOLD_MS / 1000}s)`);
-        }
-
         if (inactiveTime > THRESHOLD_MS) {
-          console.warn(`[Watchdog] 🚨 Activity Stall Detected! No activity for ${Math.round(inactiveTime / 1000)}s.`);
+          const inactiveSec = Math.round(inactiveTime / 1000);
+          console.warn(`[Watchdog] 🚨 Activity Stall Detected! No activity for ${inactiveSec}s (${huntingTasksCount} active tasks in DB).`);
+
+          // Log to negative file
+          sessionLogger.log('ERROR', {
+            context: 'WATCHDOG',
+            message: `Activity stall detected: ${inactiveSec}s inactivity with ${huntingTasksCount} active tasks. Triggering restart.`
+          });
+
           await fullRestart(telegramBot);
+        } else if (inactiveTime > THRESHOLD_MS / 2) {
+          // Warning at 15 seconds (halfway point)
+          const inactiveSec = Math.round(inactiveTime / 1000);
+          console.log(`[Watchdog] ⚠️ Warning: No activity for ${inactiveSec}s (Restart at ${THRESHOLD_MS / 1000}s)`);
+
+          sessionLogger.log('WARN', {
+            context: 'WATCHDOG',
+            message: `Inactivity warning: ${inactiveSec}s without updates (${huntingTasksCount} active tasks).`
+          });
         }
       } else {
         // No active tasks, keep activity time fresh
@@ -358,7 +371,7 @@ export function startGlobalWatchdog(telegramBot) {
     } catch (err) {
       console.error(`[Watchdog] Error in loop: ${err.message}`);
     }
-  }, 1000); // More frequent check for "real" time accuracy
+  }, CHECK_INTERVAL_MS);
 }
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
