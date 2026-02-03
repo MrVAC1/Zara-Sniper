@@ -219,12 +219,25 @@ export async function fullRestart(telegramBot) {
     } catch (e) { }
   }
 
-  // 2. Stop all active workers and clear queue (WITHOUT changing DB status)
+  // 2. Stop all active workers and clear queue
   try {
     const activeTaskIds = Array.from(activePages.keys());
+    console.log(`[Watchdog] Terminating ${activeTaskIds.length} active instances...`);
+
+    // Set status to 'restarting' in DB to signal old loops to exit
+    if (activeTaskIds.length > 0) {
+      await SniperTask.updateMany(
+        { _id: { $in: activeTaskIds } },
+        { $set: { status: 'restarting' } }
+      );
+    }
+
     for (const taskId of activeTaskIds) {
       // Remove from execution queue
       taskQueue.remove(taskId.toString());
+
+      // Force remove from running Map to avoid "Already running" collision
+      taskQueue.running.delete(taskId.toString());
 
       // Close the specific worker page
       const page = activePages.get(taskId.toString());
@@ -232,7 +245,9 @@ export async function fullRestart(telegramBot) {
       activePages.delete(taskId.toString());
     }
     taskQueue.clear();
-  } catch (e) { }
+  } catch (e) {
+    console.error(`[Watchdog] Cleanup error: ${e.message}`);
+  }
 
   // 3. Verify Session Health
   try {
@@ -276,9 +291,10 @@ export async function fullRestart(telegramBot) {
   try {
     const currentBotId = getBotId();
     // Strict scoping: Only restore tasks belonging to this bot instance
+    // Filter: Explicitly ignore paused, failed, or completed tasks
     const tasks = await SniperTask.find({
       botId: currentBotId,
-      status: { $in: ['hunting', 'HUNTING', 'processing', 'at_checkout', 'SEARCHING', 'PENDING', 'MONITORING'] }
+      status: { $in: ['hunting', 'restarting', 'processing', 'at_checkout', 'SEARCHING', 'PENDING', 'MONITORING'] }
     });
     console.log(`[Watchdog] 🔄 Restoring ${tasks.length} tasks (BotID: ${currentBotId})...`);
 

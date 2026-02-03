@@ -8,6 +8,7 @@ import { createRequire } from 'module';
 import { proxyManager } from './proxyManager.js';
 import { loadSession, saveSession, saveSessionData } from './session.js';
 import { reportError } from './logService.js';
+import { Semaphore } from '../utils/botUtils.js';
 
 dotenv.config();
 
@@ -21,6 +22,7 @@ chromium.use(stealth);
 // Global Browser Context
 let globalContext = null;
 let isInitializing = false;
+const initLock = new Semaphore(1);
 
 // Getter to retrieve the *current* runtime context
 export const getContext = () => globalContext;
@@ -129,25 +131,18 @@ export async function initBrowser(userDataDir = USER_DATA_DIR) {
     throw new Error('initBrowser requires userDataDir argument');
   }
 
-  // If context exists and healthy, return it (Unless force-reinit is implemented elsewhere, but standard logic applies)
-  // NOTE: If we want to CHANGE proxy, we must close and re-init. This function assumes if context exists, we keep it.
-  // The caller is responsible for calling closeBrowser() if they want a NEW proxy.
-  if (globalContext && isContextHealthy()) {
-    return globalContext;
-  }
-
-  // Prevent double initialization
-  if (isInitializing) {
-    console.log('🔄 Browser is already initializing, waiting...');
-    while (isInitializing) {
-      await new Promise(r => setTimeout(r, 500));
-      if (globalContext && isContextHealthy()) return globalContext;
-    }
-  }
-
-  isInitializing = true;
+  // Hard Lock: Multiple tasks shouldn't initialize at once
+  await initLock.acquire();
 
   try {
+    // If context exists and healthy, return it 
+    if (globalContext && isContextHealthy()) {
+      return globalContext;
+    }
+
+    isInitializing = true;
+    console.log('🔄 [Init] Hard Lock acquired. Starting browser initialization...');
+
     // 1. Handle Singleton Lock (Windows/Chromium glitches)
     const lockFile = path.join(userDataDir, 'SingletonLock');
     if (fs.existsSync(lockFile)) {
@@ -448,6 +443,7 @@ export async function initBrowser(userDataDir = USER_DATA_DIR) {
     throw error;
   } finally {
     isInitializing = false;
+    initLock.release();
   }
 }
 
