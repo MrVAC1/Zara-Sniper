@@ -9,6 +9,7 @@ import { proxyManager } from './proxyManager.js';
 import { loadSession, saveSession, saveSessionData } from './session.js';
 import { reportError } from './logService.js';
 import { Semaphore } from '../utils/botUtils.js';
+import sessionLogger from './sessionLogger.js';
 
 dotenv.config();
 
@@ -436,8 +437,15 @@ export async function initBrowser(userDataDir = USER_DATA_DIR) {
     }
 
     console.log('[Session] ✅ Browser initialized.');
+
+    // Start session logging upon successful browser init
+    sessionLogger.startNewSession();
+
     return globalContext;
   } catch (error) {
+    // Append initialization failure to the current session log (if exists)
+    sessionLogger.log('ERROR', { context: 'BROWSER_INIT', message: 'Browser Initialization Error' }, error);
+
     console.error('❌ Browser Initialization Error:', error);
     globalContext = null;
     throw error;

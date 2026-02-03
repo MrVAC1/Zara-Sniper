@@ -12,6 +12,7 @@ import { triggerIpGuard, isSystemPaused } from './healthGuard.js';
 import { parseProductOptions } from './zaraParser.js';
 import { reportError } from './logService.js';
 import { getBotId, Semaphore } from '../utils/botUtils.js';
+import sessionLogger from './sessionLogger.js';
 
 // Global Semaphore for serializing API checks Cross-Task
 const apiSemaphore = new Semaphore(1);
@@ -1346,6 +1347,13 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
           const durationMsg = purchaseStartTime ? `⏱ Час виконання: ${duration} сек` : '';
 
           await SniperTask.findByIdAndUpdate(taskId, { status: 'completed' });
+
+          // Session Log Success
+          sessionLogger.log('SUCCESS', {
+            taskId,
+            productName,
+            context: 'CHECKOUT'
+          });
           logger.success(`[Checkout] ✅ Task marked as COMPLETED. Awaiting bank confirmation. ${durationMsg}`);
           console.log(`[Success] Всі скріншоти надіслано, викуп ініційовано для завдання ${taskId}. ${durationMsg}`);
 
@@ -1566,6 +1574,7 @@ async function sniperLoop(task, telegramBot, logger) {
                 logger.log(`[Status] 🔭 Monitoring Item ${taskIndex}/${huntingTasks.length}: ${task.productName}`);
 
                 data = await checkAvailability(storeId, productId, task.skuId, {
+                  taskId: task._id,
                   isDebug: true,
                   logger,
                   color: task.selectedColor?.name,

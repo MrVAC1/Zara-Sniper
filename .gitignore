@@ -19,3 +19,4 @@ error_debug.jpg
 brightdata_proxy/
 brightdata_proxy.crt
 *.exe
+logs/

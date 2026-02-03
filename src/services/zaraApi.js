@@ -1,6 +1,7 @@
 import { getHeaders } from './tokenManager.js';
 import { USER_AGENT } from './browser.js';
 import { getTimeConfig } from '../utils/timeUtils.js';
+import sessionLogger from './sessionLogger.js';
 
 const { TIMEOUT_API_RETRY } = getTimeConfig();
 
@@ -23,6 +24,9 @@ export async function checkAvailability(storeId, productId, targetSkuId = null, 
     }
     const url = `https://www.zara.com/itxrest/1/catalog/store/${storeId}/product/id/${productId}/availability`;
     const isDebug = process.env.DEBUG_API === 'true';
+
+    // Session Logging: Increment API counter
+    sessionLogger.increment(context.taskId);
 
     const start = Date.now();
     try {
@@ -83,7 +87,13 @@ export async function checkAvailability(storeId, productId, targetSkuId = null, 
 
         return data;
     } catch (error) {
-        if (error.message === 'AKAMAI_BLOCK' || error.message === 'BROWSER_DISCONNECTED') throw error;
+        if (error.message === 'AKAMAI_BLOCK' || error.message === 'BROWSER_DISCONNECTED') {
+            sessionLogger.log('ERROR', { context: 'API', taskId: context.taskId, productId, message: `Critical API Block: ${error.message}` }, error);
+            throw error;
+        }
+
+        sessionLogger.log('WARN', { context: 'API', taskId: context.taskId, productId, message: `API Check Failed: ${error.message}` });
+
         console.warn(`[API] Availability check failed: ${error.message}`);
         throw error;
     }
@@ -99,6 +109,9 @@ export async function getSizingInfo(storeId, productId, locale = 'uk-UA') {
 
     let retries = 2;
     while (retries >= 0) {
+        // Session Logging: Increment API counter (Sizing info)
+        sessionLogger.increment();
+
         try {
             const response = await fetch(url, {
                 method: 'GET',
