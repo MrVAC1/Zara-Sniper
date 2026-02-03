@@ -82,7 +82,7 @@ export async function checkAvailability(storeId, productId, targetSkuId = null, 
 
         return data;
     } catch (error) {
-        if (error.message === 'AKAMAI_BLOCK') throw error;
+        if (error.message === 'AKAMAI_BLOCK' || error.message === 'BROWSER_DISCONNECTED') throw error;
         console.warn(`[API] Availability check failed: ${error.message}`);
         throw error;
     }

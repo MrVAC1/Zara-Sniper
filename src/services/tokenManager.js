@@ -35,6 +35,7 @@ export async function getAuthToken() {
     }
 
     const browser = await getBrowser();
+    if (!browser) throw new Error('BROWSER_DISCONNECTED');
     let pages = browser.pages();
     // Use first open page or create new if none
     let page = pages.length > 0 ? pages[0] : await browser.newPage();
@@ -91,6 +92,7 @@ export async function getAuthToken() {
 
 export async function getHeaders(storeId = '11767') { // Updated to new UA Store ID
     const browser = await getBrowser();
+    if (!browser) throw new Error('BROWSER_DISCONNECTED');
     let pages = browser.pages();
     // Use an existing page if possible to share session state
     let page = pages.find(p => !p.isClosed());

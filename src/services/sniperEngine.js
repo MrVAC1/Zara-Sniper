@@ -1201,542 +1201,552 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
 async function sniperLoop(task, telegramBot, logger) {
   let browserContext = await getBrowser();
 
-  // FIX: Auto-Recovery for Lost Browser
-  if (!browserContext) {
-    logger.warn('[Sniper] Browser context missing. Attempting auto-recovery...');
-    try {
-      // Re-init without args relies on lastUserDataDir in browser.js
-      browserContext = await initBrowser();
-    } catch (e) {
-      logger.error(`[Sniper] Recovery failed: ${e.message}`);
+
+
+  try {
+    // FIX: Auto-Recovery for Lost Browser
+    if (!browserContext) {
+      logger.warn('[Sniper] Browser context missing. Attempting auto-recovery...');
+      try {
+        // Re-init without args relies on lastUserDataDir in browser.js
+        browserContext = await initBrowser();
+      } catch (e) {
+        logger.error(`[Sniper] Recovery failed: ${e.message}`);
+      }
+      // Double check
+      browserContext = await getBrowser();
     }
-    // Double check
-    browserContext = await getBrowser();
-  }
 
-  if (!browserContext) throw new Error('Браузер не ініціалізовано (Recovery failed)');
+    if (!browserContext) throw new Error('Браузер не ініціалізовано (Recovery failed)');
 
-  // Start of Sniper Loop
-  let page = activePages.get(task._id.toString());
-  let apiFound = false;
-  let attempts = 0;
+    // Start of Sniper Loop
+    let page = activePages.get(task._id.toString());
+    let apiFound = false;
+    let attempts = 0;
 
-  // New: Track availability status for priority
-  let detectedAvailability = 'in_stock';
+    // New: Track availability status for priority
+    let detectedAvailability = 'in_stock';
 
-  // New: Flag to track if SKU ID is confirmed valid via API
-  // If mismatch occurs, we set this to false until repaired
-  let isSkuValidated = false;
+    // New: Flag to track if SKU ID is confirmed valid via API
+    // If mismatch occurs, we set this to false until repaired
+    let isSkuValidated = false;
 
-  // NEW: State for "Waiting for Catalog" (when color is missing in region)
-  let isWaitingForCatalog = false;
-  let lastCatalogSkuCount = 0;
+    // NEW: State for "Waiting for Catalog" (when color is missing in region)
+    let isWaitingForCatalog = false;
+    let lastCatalogSkuCount = 0;
 
-  // Extract Product ID and Store ID
-  let productId = task.productId; // Primary source: DB (from viewPayload)
+    // Extract Product ID and Store ID
+    let productId = task.productId; // Primary source: DB (from viewPayload)
 
-  // The previous failed because I provided a snippet that didn't match exactly.
-  // I will try to target specific blocks separately if possible, or a larger block if confident.
+    // The previous failed because I provided a snippet that didn't match exactly.
+    // I will try to target specific blocks separately if possible, or a larger block if confident.
 
-  // I will perform this in TWO steps to avoid context mismatch issues.
-  // Step 1: Add detectedAvailability variable.
-  // Step 2: Update Phase 2 logic (Priority Queue).
+    // I will perform this in TWO steps to avoid context mismatch issues.
+    // Step 1: Add detectedAvailability variable.
+    // Step 2: Update Phase 2 logic (Priority Queue).
 
-  // Wait, I cannot do two replace_calls in one turn for the SAME file if they are not using multi_replace.
-  // I should use multi_replace interaction.
+    // Wait, I cannot do two replace_calls in one turn for the SAME file if they are not using multi_replace.
+    // I should use multi_replace interaction.
 
-  // I will use multi_replace for this.
-  // Chunk 1: Add variable at top of loop.
-  // Chunk 2: Update API success block to save availability.
-  // Chunk 3: Replace Phase 2 logic.
+    // I will use multi_replace for this.
+    // Chunk 1: Add variable at top of loop.
+    // Chunk 2: Update API success block to save availability.
+    // Chunk 3: Replace Phase 2 logic.
 
-  // Wait, let's use `multi_replace_file_content`.
+    // Wait, let's use `multi_replace_file_content`.
 
-  if (!productId) {
-    try {
-      const u = new URL(task.url);
-      if (u.searchParams.has('v1')) {
-        productId = u.searchParams.get('v1');
-      } else {
+    if (!productId) {
+      try {
+        const u = new URL(task.url);
+        if (u.searchParams.has('v1')) {
+          productId = u.searchParams.get('v1');
+        } else {
+          const match = task.url.match(/-p(\d+)\.html/);
+          if (match) productId = match[1];
+        }
+      } catch (e) {
         const match = task.url.match(/-p(\d+)\.html/);
         if (match) productId = match[1];
       }
-    } catch (e) {
-      const match = task.url.match(/-p(\d+)\.html/);
-      if (match) productId = match[1];
+      if (productId) {
+        // logger.warn(`[Sniper] Warning: task.productId was missing. Extracted from URL: ${productId}`);
+        // Initial extraction is just a guess, we rely on DB or Correction
+      }
     }
-    if (productId) {
-      // logger.warn(`[Sniper] Warning: task.productId was missing. Extracted from URL: ${productId}`);
-      // Initial extraction is just a guess, we rely on DB or Correction
-    }
-  }
 
-  let storeId = STORE_IDS.UA;
-  if (task.url.includes('/es/')) storeId = STORE_IDS.ES;
-  else if (task.url.includes('/pl/')) storeId = STORE_IDS.PL;
-  else if (task.url.includes('/de/')) storeId = STORE_IDS.DE;
+    let storeId = STORE_IDS.UA;
+    if (task.url.includes('/es/')) storeId = STORE_IDS.ES;
+    else if (task.url.includes('/pl/')) storeId = STORE_IDS.PL;
+    else if (task.url.includes('/de/')) storeId = STORE_IDS.DE;
 
-  const initPage = async () => {
-    try {
-      if (page) {
-        if (!page.isClosed()) return;
-        await page.close().catch(() => { });
-      }
-
-      const existingPage = activePages.get(task._id.toString());
-      if (existingPage && !existingPage.isClosed()) {
-        page = existingPage;
-        logger.log('Підключено до попередньо відкритої сторінки');
-        return;
-      }
-
-      // Ensure browser is initialised with Current Proxy
-      let browser = await getBrowser();
-      if (!browser) {
-        const proxy = proxyManager.getPlaywrightProxy();
-        browser = await initBrowser(undefined, proxy); // undefined userDataDir (uses cached or error)
-        // Actually, initBrowser requires userDataDir. 
-        // We rely on getBrowser() being null meaning we need to init from scratch? 
-        // Use 'await initBrowser()' in main loop passed userDataDir.
-        // Wait, initPage relies on global 'initBrowser' holding the state.
-        // We need to make sure we force close browser if rotating.
-      }
-
-      page = await createTaskPage(task._id);
-
-      // --- AKAMAI INTERCEPTOR ---
-      page.on('response', async (response) => {
-        try {
-          if (response.status() === 403 || response.status() === 429) {
-            const url = response.url();
-            if (url.includes('zara.com')) {
-              logger.warn(`[Anti-Bot] 🛡️ Akamai Block Detected (Status ${response.status()}) on ${url}`);
-              // We throw a specific error that the main loop can catch? 
-              // It's hard to throw from event listener to main loop.
-              // We will emit text or rely on page content check.
-
-              // Strategy: Set a flag on the page or task?
-              // Or just let the verify check fail.
-            }
-          }
-        } catch (e) { }
-      });
-      // --------------------------
-
-      activePages.set(task._id.toString(), page);
-      logger.log('Створено нову вкладку (waiting for trigger)');
-    } catch (e) {
-      logger.error(`Не вдалося ініціалізувати сторінку: ${e.message}`);
-      throw e;
-    }
-  };
-
-  try {
-    await initPage();
-    logger.log(`[Hybrid Sniper] Started for ${task.productName} [${task.selectedSize?.name}]`);
-
-    while ((task.status === 'hunting' || task.status === 'processing') && attempts < task.maxAttempts) {
-
-      // --- PHASE 1: API MONITORING (The Hunter) ---
-      let apiFound = false;
-
-      if (task.status === 'processing') {
-        logger.log(`[Status] ⚡ Processing Mode: Skipping API Monitor -> Immediate Execution.`);
-        apiFound = true;
-      } else {
-        logger.log(`[Status] 📡 Entering API Monitoring Phase...`);
-
-        while (task.status === 'hunting') {
-          if (isSystemPaused()) {
-            await delay(TIMEOUT_HEALTH_PAGE);
-            continue;
-          }
-
-          try {
-            // 1. Check Task Status from DB (Heartbeat)
-            const freshTask = await SniperTask.findById(task._id);
-            if (!freshTask || freshTask.status !== 'hunting') {
-              task.status = freshTask ? freshTask.status : 'stopped';
-              break;
-            }
-
-            // 2. API Check
-            // logger.log(`[API] Checking availability...`);
-            const data = await checkAvailability(storeId, productId, task.skuId, {
-              color: task.selectedColor?.name,
-              size: task.selectedSize?.name
-            });
-
-            // --- WAITING FOR CATALOG LOGIC ---
-            if (isWaitingForCatalog) {
-              if (data && data.skusAvailability) {
-                const currentCount = data.skusAvailability.length;
-
-                // If catalog changed (count different or non-zero if it was zero)
-                // We optimistically try to re-scan
-                if (currentCount !== lastCatalogSkuCount && currentCount > 0) {
-                  logger.success(`[Catalog Monitor] 🔄 Catalog update detected (SKUs: ${currentCount}). Retrying Auto-Correction...`);
-                  isWaitingForCatalog = false;
-                  lastCatalogSkuCount = 0; // Reset
-                  // Fall through to normal repair logic below
-                } else {
-                  // Still waiting - skip repair, just sleep
-                  if (attempts % 20 === 0) logger.log(`[Catalog Monitor] 💤 Still waiting for color "${task.selectedColor.name}" to appear in catalog...`);
-                  await delay(API_MONITORING_INTERVAL * 2); // Slow down polling
-                  continue;
-                }
-              }
-            }
-            // --------------------------------
-
-            if (data && data.skusAvailability) {
-              // Loose equality check for safety (string vs number)
-              const targetSku = data.skusAvailability.find(s => s.sku == task.skuId);
-
-              if (targetSku) {
-                // Happy Path: SKU ID matches API
-                isSkuValidated = true;
-
-                if (targetSku.availability === 'in_stock' || targetSku.availability === 'low_stock') {
-                  logger.success(`[API Hunter] 🎯 TARGET DETECTED! SKU: ${task.skuId} is ${targetSku.availability}`);
-                  detectedAvailability = targetSku.availability; // Capture status for priority
-                  apiFound = true;
-                  break; // EXIT API LOOP -> GO TO BROWSER
-                } else if (targetSku.availability === 'back_soon') {
-                  // Optional: Handling "Coming Soon" or just wait
-                  // logger.log(`[API] Status: Back Soon.`);
-                }
-              } else {
-                // Sad Path: SKU NOT FOUND in 200 OK response
-                if (!isSkuValidated) {
-                  logger.warn(`[Auto-Correction] ⚠️ SKU ${task.skuId} not found in API response. Initiating repair...`);
-
-                  // --- REPAIR LOGIC START ---
-                  try {
-                    // 1. Ensure Browser Page is Ready
-                    if (!page || page.isClosed()) {
-                      await initPage();
-                    }
-
-                    // 2. Navigate/Refresh to get fresh ViewPayload
-                    logger.log(`[Auto-Correction] Reading viewPayload from page: ${task.url}`);
-                    await injectRegionalCookies(browserContext, task.url);
-                    await page.goto(task.url, { waitUntil: 'domcontentloaded', timeout: GOTO_TIMEOUT });
-
-                    // 3. Extract Correct SKU ID from Payload with SMART MATCHING
-                    const repairResult = await page.evaluate(({ targetColorName, targetSizeName }) => {
-                      try {
-                        if (!window.zara || !window.zara.viewPayload) return null;
-                        const p = window.zara.viewPayload.product;
-                        if (!p || !p.detail || !p.detail.colors) return null;
-
-                        const targetNameNorm = targetColorName.toLowerCase().trim();
-
-                        // Smart Color Matching Strategy
-                        let color = p.detail.colors.find(c =>
-                          (c.name && c.name.toLowerCase().trim() === targetNameNorm) ||
-                          (c.id && c.id.toString() === targetNameNorm) // Check if user passed ID
-                        );
-
-                        // Fallback 1: Try finding match by partial name if exact fails
-                        if (!color) {
-                          color = p.detail.colors.find(c => c.name && c.name.toLowerCase().includes(targetNameNorm));
-                        }
-
-                        // Fallback 2: If product has ONLY ONE color, assume it's the one (common for simple products)
-                        if (!color && p.detail.colors.length === 1) {
-                          color = p.detail.colors[0];
-                        }
-
-                        if (!color) return { error: `Color "${targetColorName}" not found (Smart Match failed). Available: ${p.detail.colors.map(c => c.name).join(', ')}` };
-
-                        const targetSizeNorm = targetSizeName.toLowerCase().trim();
-                        const size = color.sizes.find(s => s.name.toLowerCase().trim() === targetSizeNorm);
-
-                        if (!size) return { error: `Size "${targetSizeName}" not found in color ${color.name}` };
-
-                        return {
-                          newSkuId: size.sku || size.id, // FIX: Prioritize 'sku'
-                          productId: p.id,
-                          availability: size.availability
-                        };
-                      } catch (e) { return { error: e.message }; }
-                    }, { targetColorName: task.selectedColor.name, targetSizeName: task.selectedSize.name });
-
-                    if (repairResult && repairResult.newSkuId) {
-                      const oldSku = task.skuId;
-                      const newSku = repairResult.newSkuId;
-
-                      logger.success(`[Auto-Correction] ✅ FIXED? Old SKU: ${oldSku} -> New SKU: ${newSku}`);
-
-                      // Update Local Task State
-                      task.skuId = newSku;
-                      if (repairResult.productId) {
-                        productId = repairResult.productId; // Update local productId variable
-                        task.productId = repairResult.productId;
-                      }
-
-                      // Save to DB
-                      await SniperTask.findByIdAndUpdate(task._id, {
-                        skuId: newSku,
-                        productId: task.productId
-                      });
-
-                      // Mark as validated (optimistic) or retry immediately?
-                      // Let's retry API immediately in next loop iteration
-                      isSkuValidated = true;
-
-                      // Optional: Check availability immediately from payload
-                      if (repairResult.availability === 'in_stock' || repairResult.availability === 'low_stock') {
-                        logger.success(`[Auto-Correction] Payload says IN STOCK! Switching to execution.`);
-                        apiFound = true;
-                        break;
-                      }
-
-                    } else {
-                      const errorMsg = repairResult?.error || 'Unknown';
-                      logger.error(`[Auto-Correction] Failed to resolve SKU. Payload mismatch. Error: ${errorMsg}`);
-
-                      // NEW: Check if error is "Color not found"
-                      if (errorMsg.includes('Color') && errorMsg.includes('not found')) {
-                        logger.warn(`[Catalog Monitor] 🔍 Color "${task.selectedColor.name}" missing in this region. Entering WAITING MODE.`);
-                        isWaitingForCatalog = true;
-                        if (data && data.skusAvailability) lastCatalogSkuCount = data.skusAvailability.length;
-
-                        if (telegramBot && task.userId) {
-                          telegramBot.telegram.sendMessage(task.userId, `🔍 <b>Статус: Очікування Каталогу</b>\nКолір "<b>${task.selectedColor.name}</b>" зараз відсутній у каталозі магазину.\nБот перейшов у режим моніторингу і спробує знову, коли каталог оновиться.`, { parse_mode: 'HTML' }).catch(() => { });
-                        }
-                        // Close page to save resources while waiting
-                        if (page) await page.close().catch(() => { });
-                        activePages.delete(task._id.toString());
-                      }
-                    }
-                  } catch (repairError) {
-                    logger.error(`[Auto-Correction] Repair failed: ${repairError.message}`);
-                  }
-                  // --- REPAIR LOGIC END ---
-                }
-              }
-            }
-
-            // 3. Wait
-            await delay(API_MONITORING_INTERVAL);
-            attempts++; // Count API attempts as "activity"
-
-            if (attempts % 10 === 0) {
-              task.lastChecked = new Date();
-              await task.save();
-            }
-
-          } catch (err) {
-            if (err.message === 'AKAMAI_BLOCK') {
-              logger.warn(`[Akamai Defense] 🛡️ 401/403 Detected. Pausing for ${AKAMAI_BAN_DELAY / 1000}s...`);
-              await delay(AKAMAI_BAN_DELAY);
-              await refreshSession();
-            } else {
-              logger.warn(`[API] Error: ${err.message}. Retrying...`);
-              await delay(API_MONITORING_INTERVAL);
-            }
-          }
-        }
-      }
-
-      if (task.status !== 'hunting' && task.status !== 'processing') break;
-      if (!apiFound) continue; // Should not happen unless status changed
-
-      // --- PHASE 2: BROWSER EXECUTION (The Killer) ---
-      // Removed old simple wait loop
-
-      logger.log(`[Execution] ⚔️ API confirmed stock. Launching Browser Attack!`);
-      const purchaseStartTime = Date.now();
-
+    const initPage = async () => {
       try {
-        if (!page || page.isClosed()) await initPage();
-
-        // 1. Navigate to Product Page with Retry Logic
-        await injectRegionalCookies(browserContext, task.url); // Ensure cookies
-
-        let colorCheck = { success: false };
-        const MAX_RETRIES = 10;
-        const PAUSE_BETWEEN_RETRIES = 10000;
-
-        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-          await page.goto(task.url, { waitUntil: 'domcontentloaded', timeout: GOTO_TIMEOUT });
-
-          await removeUIObstacles(page);
-          await closeAlerts(page);
-
-          // 1.5 Strict Color Verification
-          colorCheck = await verifyAndSelectColor(page, task.targetColorRGB, logger);
-
-          // --- AKAMAI / BLOCK CHECK (Title & Content) ---
-          const pageTitle = await page.title().catch(() => '');
-          if (pageTitle.includes('Access Denied') || pageTitle.includes('Reference #')) {
-            throw new Error('AKAMAI_BLOCK_PAGE');
-          }
-          // ----------------------------------------------
-
-          if (colorCheck.success || !task.targetColorRGB) {
-            break; // DETECTED! Exit retry loop and proceed
-          }
-
-          if (attempt < MAX_RETRIES) {
-            logger.warn(`[Wait] Кнопку кольору не знайдено. Очікування оновлення UI (Спроба ${attempt}/${MAX_RETRIES})...`);
-            await delay(PAUSE_BETWEEN_RETRIES);
-          }
-        } // End of Retry Loop
-
-        if (!colorCheck.success && task.targetColorRGB) {
-          logger.error(`❌ [Error] Колір не знайдено на сторінці після ${MAX_RETRIES} спроб (Expected: ${task.targetColorRGB}).`);
-
-          await SniperTask.findByIdAndUpdate(task._id, { status: 'failed' });
-          if (page) await page.close().catch(() => { });
-          activePages.delete(task._id.toString());
-          break; // Exit Sniper Loop (Task Failed)
-
-        } else if (colorCheck.success && task.targetColorRGB) {
-          logger.success(`✅ [Success] Колір вибрано візуально: ${task.targetColorRGB}.`);
+        if (page) {
+          if (!page.isClosed()) return;
+          await page.close().catch(() => { });
         }
 
-        // 2. Perform DOM Check & Interaction (Color/Size)
-        // Reuse existing logic
-        let uiAvailability = await checkSkuAvailability(page, task.skuId, task.selectedColor, task.selectedSize, logger);
+        const existingPage = activePages.get(task._id.toString());
+        if (existingPage && !existingPage.isClosed()) {
+          page = existingPage;
+          logger.log('Підключено до попередньо відкритої сторінки');
+          return;
+        }
 
-        if (uiAvailability.available) {
-          logger.success(`[Execution] DOM Confirmed Stock! Entering Checkout Queue...`);
+        // Ensure browser is initialised with Current Proxy
+        let browser = await getBrowser();
+        if (!browser) {
+          const proxy = proxyManager.getPlaywrightProxy();
+          browser = await initBrowser(undefined, proxy); // undefined userDataDir (uses cached or error)
+          // Actually, initBrowser requires userDataDir. 
+          // We rely on getBrowser() being null meaning we need to init from scratch? 
+          // Use 'await initBrowser()' in main loop passed userDataDir.
+          // Wait, initPage relies on global 'initBrowser' holding the state.
+          // We need to make sure we force close browser if rotating.
+        }
 
-          // 3. PRIORITY QUEUE & LOCKING
-          // Determine priority: 1 if low_stock, 0 otherwise
-          const priority = detectedAvailability === 'low_stock' ? 1 : 0;
+        page = await createTaskPage(task._id);
 
-          logger.log(`[QUEUE] Requesting Checkout Lock (Priority: ${priority})...`);
-          await requestCheckoutLock(task._id, priority);
-          logger.log(`[LOCK] 🔒 Checkout Lock Acquired!`);
-
+        // --- AKAMAI INTERCEPTOR ---
+        page.on('response', async (response) => {
           try {
-            // 4. API RE-VERIFICATION (As requested)
-            logger.log(`[Verification] Re-checking API before purchase...`);
+            if (response.status() === 403 || response.status() === 429) {
+              const url = response.url();
+              if (url.includes('zara.com')) {
+                logger.warn(`[Anti-Bot] 🛡️ Akamai Block Detected (Status ${response.status()}) on ${url}`);
+                // We throw a specific error that the main loop can catch? 
+                // It's hard to throw from event listener to main loop.
+                // We will emit text or rely on page content check.
 
-            // Only strictly enforce API check if we have CONFIDENCE in our SKU (isSkuValidated = true)
-            // If we are running on "Blind Faith" (DOM said yes, but API mismatch), we skip this check to avoid false negative.
-            if (isSkuValidated) {
-              const reCheck = await checkAvailability(storeId, productId, task.skuId, {
+                // Strategy: Set a flag on the page or task?
+                // Or just let the verify check fail.
+              }
+            }
+          } catch (e) { }
+        });
+        // --------------------------
+
+        activePages.set(task._id.toString(), page);
+        logger.log('Створено нову вкладку (waiting for trigger)');
+      } catch (e) {
+        logger.error(`Не вдалося ініціалізувати сторінку: ${e.message}`);
+        throw e;
+      }
+    };
+
+    try {
+      await initPage();
+      logger.log(`[Hybrid Sniper] Started for ${task.productName} [${task.selectedSize?.name}]`);
+
+      while ((task.status === 'hunting' || task.status === 'processing') && attempts < task.maxAttempts) {
+
+        // --- PHASE 1: API MONITORING (The Hunter) ---
+        let apiFound = false;
+
+        if (task.status === 'processing') {
+          logger.log(`[Status] ⚡ Processing Mode: Skipping API Monitor -> Immediate Execution.`);
+          apiFound = true;
+        } else {
+          logger.log(`[Status] 📡 Entering API Monitoring Phase...`);
+
+          while (task.status === 'hunting') {
+            if (isSystemPaused()) {
+              await delay(TIMEOUT_HEALTH_PAGE);
+              continue;
+            }
+
+            try {
+              // 1. Check Task Status from DB (Heartbeat)
+              const freshTask = await SniperTask.findById(task._id);
+              if (!freshTask || freshTask.status !== 'hunting') {
+                task.status = freshTask ? freshTask.status : 'stopped';
+                break;
+              }
+
+              // 2. API Check
+              // logger.log(`[API] Checking availability...`);
+              const data = await checkAvailability(storeId, productId, task.skuId, {
                 color: task.selectedColor?.name,
                 size: task.selectedSize?.name
               });
-              const reTarget = reCheck?.skusAvailability?.find(s => s.sku == task.skuId);
-              const isStillAvailable = reTarget && (reTarget.availability === 'in_stock' || reTarget.availability === 'low_stock');
 
-              if (!isStillAvailable) {
-                logger.warn(`[Execution] ❌ Re-verification FAILED (SKU Validated). Item gone or API lag. Releasing lock.`);
-                throw new Error('API Re-verification Failed');
-              }
-              logger.success(`[Verification] ✅ API Confirms Availability: ${reTarget.availability}`);
-            } else {
-              logger.warn(`[Verification] ⚠️ SKU not validated via API yet. Skipping strict Re-verification and trusting DOM availability.`);
-            }
+              // --- WAITING FOR CATALOG LOGIC ---
+              if (isWaitingForCatalog) {
+                if (data && data.skusAvailability) {
+                  const currentCount = data.skusAvailability.length;
 
-            // 5. Add to Cart & Checkout
-            await addToCart(page, uiAvailability.element, task.selectedColor, logger);
-            const verified = await verifyCartAddition(page, logger);
-
-            if (verified) {
-              await SniperTask.findByIdAndUpdate(task._id, { status: 'at_checkout' });
-
-              // Watchdog definition inside lock scope
-              const lockWatchdog = setTimeout(() => {
-                if (isCheckoutLocked) {
-                  console.error(`[WATCHDOG] ⚠️ Force releasing checkout lock after ${CHECKOUT_MAX_LOCK_TIME}ms`);
-                  releaseCheckoutLock();
+                  // If catalog changed (count different or non-zero if it was zero)
+                  // We optimistically try to re-scan
+                  if (currentCount !== lastCatalogSkuCount && currentCount > 0) {
+                    logger.success(`[Catalog Monitor] 🔄 Catalog update detected (SKUs: ${currentCount}). Retrying Auto-Correction...`);
+                    isWaitingForCatalog = false;
+                    lastCatalogSkuCount = 0; // Reset
+                    // Fall through to normal repair logic below
+                  } else {
+                    // Still waiting - skip repair, just sleep
+                    if (attempts % 20 === 0) logger.log(`[Catalog Monitor] 💤 Still waiting for color "${task.selectedColor.name}" to appear in catalog...`);
+                    await delay(API_MONITORING_INTERVAL * 2); // Slow down polling
+                    continue;
+                  }
                 }
-              }, CHECKOUT_MAX_LOCK_TIME);
-
-              try {
-                await proceedToCheckout(page, telegramBot, task._id, task.userId, task.productName, task.selectedSize?.name, task.selectedColor?.name, logger, purchaseStartTime);
-                clearTimeout(lockWatchdog);
-                return; // Exit loop
-              } catch (chkErr) {
-                clearTimeout(lockWatchdog);
-                throw chkErr;
               }
-            } else {
-              throw new Error('Failed to verify cart addition');
-            }
-          } finally {
-            // ALWAYS RELEASE LOCK
-            if (isCheckoutLocked) {
-              releaseCheckoutLock();
-              logger.log(`[LOCK] 🔓 Checkout Lock Released.`);
+              // --------------------------------
+
+              if (data && data.skusAvailability) {
+                // Loose equality check for safety (string vs number)
+                const targetSku = data.skusAvailability.find(s => s.sku == task.skuId);
+
+                if (targetSku) {
+                  // Happy Path: SKU ID matches API
+                  isSkuValidated = true;
+
+                  if (targetSku.availability === 'in_stock' || targetSku.availability === 'low_stock') {
+                    logger.success(`[API Hunter] 🎯 TARGET DETECTED! SKU: ${task.skuId} is ${targetSku.availability}`);
+                    detectedAvailability = targetSku.availability; // Capture status for priority
+                    apiFound = true;
+                    break; // EXIT API LOOP -> GO TO BROWSER
+                  } else if (targetSku.availability === 'back_soon') {
+                    // Optional: Handling "Coming Soon" or just wait
+                    // logger.log(`[API] Status: Back Soon.`);
+                  }
+                } else {
+                  // Sad Path: SKU NOT FOUND in 200 OK response
+                  if (!isSkuValidated) {
+                    logger.warn(`[Auto-Correction] ⚠️ SKU ${task.skuId} not found in API response. Initiating repair...`);
+
+                    // --- REPAIR LOGIC START ---
+                    try {
+                      // 1. Ensure Browser Page is Ready
+                      if (!page || page.isClosed()) {
+                        await initPage();
+                      }
+
+                      // 2. Navigate/Refresh to get fresh ViewPayload
+                      logger.log(`[Auto-Correction] Reading viewPayload from page: ${task.url}`);
+                      await injectRegionalCookies(browserContext, task.url);
+                      await page.goto(task.url, { waitUntil: 'domcontentloaded', timeout: GOTO_TIMEOUT });
+
+                      // 3. Extract Correct SKU ID from Payload with SMART MATCHING
+                      const repairResult = await page.evaluate(({ targetColorName, targetSizeName }) => {
+                        try {
+                          if (!window.zara || !window.zara.viewPayload) return null;
+                          const p = window.zara.viewPayload.product;
+                          if (!p || !p.detail || !p.detail.colors) return null;
+
+                          const targetNameNorm = targetColorName.toLowerCase().trim();
+
+                          // Smart Color Matching Strategy
+                          let color = p.detail.colors.find(c =>
+                            (c.name && c.name.toLowerCase().trim() === targetNameNorm) ||
+                            (c.id && c.id.toString() === targetNameNorm) // Check if user passed ID
+                          );
+
+                          // Fallback 1: Try finding match by partial name if exact fails
+                          if (!color) {
+                            color = p.detail.colors.find(c => c.name && c.name.toLowerCase().includes(targetNameNorm));
+                          }
+
+                          // Fallback 2: If product has ONLY ONE color, assume it's the one (common for simple products)
+                          if (!color && p.detail.colors.length === 1) {
+                            color = p.detail.colors[0];
+                          }
+
+                          if (!color) return { error: `Color "${targetColorName}" not found (Smart Match failed). Available: ${p.detail.colors.map(c => c.name).join(', ')}` };
+
+                          const targetSizeNorm = targetSizeName.toLowerCase().trim();
+                          const size = color.sizes.find(s => s.name.toLowerCase().trim() === targetSizeNorm);
+
+                          if (!size) return { error: `Size "${targetSizeName}" not found in color ${color.name}` };
+
+                          return {
+                            newSkuId: size.sku || size.id, // FIX: Prioritize 'sku'
+                            productId: p.id,
+                            availability: size.availability
+                          };
+                        } catch (e) { return { error: e.message }; }
+                      }, { targetColorName: task.selectedColor.name, targetSizeName: task.selectedSize.name });
+
+                      if (repairResult && repairResult.newSkuId) {
+                        const oldSku = task.skuId;
+                        const newSku = repairResult.newSkuId;
+
+                        logger.success(`[Auto-Correction] ✅ FIXED? Old SKU: ${oldSku} -> New SKU: ${newSku}`);
+
+                        // Update Local Task State
+                        task.skuId = newSku;
+                        if (repairResult.productId) {
+                          productId = repairResult.productId; // Update local productId variable
+                          task.productId = repairResult.productId;
+                        }
+
+                        // Save to DB
+                        await SniperTask.findByIdAndUpdate(task._id, {
+                          skuId: newSku,
+                          productId: task.productId
+                        });
+
+                        // Mark as validated (optimistic) or retry immediately?
+                        // Let's retry API immediately in next loop iteration
+                        isSkuValidated = true;
+
+                        // Optional: Check availability immediately from payload
+                        if (repairResult.availability === 'in_stock' || repairResult.availability === 'low_stock') {
+                          logger.success(`[Auto-Correction] Payload says IN STOCK! Switching to execution.`);
+                          apiFound = true;
+                          break;
+                        }
+
+                      } else {
+                        const errorMsg = repairResult?.error || 'Unknown';
+                        logger.error(`[Auto-Correction] Failed to resolve SKU. Payload mismatch. Error: ${errorMsg}`);
+
+                        // NEW: Check if error is "Color not found"
+                        if (errorMsg.includes('Color') && errorMsg.includes('not found')) {
+                          logger.warn(`[Catalog Monitor] 🔍 Color "${task.selectedColor.name}" missing in this region. Entering WAITING MODE.`);
+                          isWaitingForCatalog = true;
+                          if (data && data.skusAvailability) lastCatalogSkuCount = data.skusAvailability.length;
+
+                          if (telegramBot && task.userId) {
+                            telegramBot.telegram.sendMessage(task.userId, `🔍 <b>Статус: Очікування Каталогу</b>\nКолір "<b>${task.selectedColor.name}</b>" зараз відсутній у каталозі магазину.\nБот перейшов у режим моніторингу і спробує знову, коли каталог оновиться.`, { parse_mode: 'HTML' }).catch(() => { });
+                          }
+                          // Close page to save resources while waiting
+                          if (page) await page.close().catch(() => { });
+                          activePages.delete(task._id.toString());
+                        }
+                      }
+                    } catch (repairError) {
+                      logger.error(`[Auto-Correction] Repair failed: ${repairError.message}`);
+                    }
+                    // --- REPAIR LOGIC END ---
+                  }
+                }
+              }
+
+              // 3. Wait
+              await delay(API_MONITORING_INTERVAL);
+              attempts++; // Count API attempts as "activity"
+
+              if (attempts % 10 === 0) {
+                task.lastChecked = new Date();
+                await task.save();
+              }
+
+            } catch (err) {
+              if (err.message === 'AKAMAI_BLOCK') {
+                logger.warn(`[Akamai Defense] 🛡️ 401/403 Detected. Pausing for ${AKAMAI_BAN_DELAY / 1000}s...`);
+                await delay(AKAMAI_BAN_DELAY);
+                await refreshSession();
+              } else if (err.message === 'BROWSER_DISCONNECTED' || err.message.includes('Cannot read properties of null')) {
+                logger.warn('[Sniper] ⚠️ Browser Disconnected/Crashed. Re-initializing...');
+                try { await initBrowser(); } catch (e) { logger.error(`[Sniper] Init failed: ${e.message}`); }
+                await delay(2000);
+              } else {
+                logger.warn(`[API] Error: ${err.message}. Retrying...`);
+                await delay(API_MONITORING_INTERVAL);
+              }
             }
           }
+        }
 
-        } else {
-          logger.warn(`[Execution] ❌ DOM Reporting Sold Out (Phantom Stock?). Returning to API Monitor.`);
-          // IMPORTANT: If we came here from 'processing', we MUST switch to 'hunting' now to prevent infinite loop
+        if (task.status !== 'hunting' && task.status !== 'processing') break;
+        if (!apiFound) continue; // Should not happen unless status changed
+
+        // --- PHASE 2: BROWSER EXECUTION (The Killer) ---
+        // Removed old simple wait loop
+
+        logger.log(`[Execution] ⚔️ API confirmed stock. Launching Browser Attack!`);
+        const purchaseStartTime = Date.now();
+
+        try {
+          if (!page || page.isClosed()) await initPage();
+
+          // 1. Navigate to Product Page with Retry Logic
+          await injectRegionalCookies(browserContext, task.url); // Ensure cookies
+
+          let colorCheck = { success: false };
+          const MAX_RETRIES = 10;
+          const PAUSE_BETWEEN_RETRIES = 10000;
+
+          for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            await page.goto(task.url, { waitUntil: 'domcontentloaded', timeout: GOTO_TIMEOUT });
+
+            await removeUIObstacles(page);
+            await closeAlerts(page);
+
+            // 1.5 Strict Color Verification
+            colorCheck = await verifyAndSelectColor(page, task.targetColorRGB, logger);
+
+            // --- AKAMAI / BLOCK CHECK (Title & Content) ---
+            const pageTitle = await page.title().catch(() => '');
+            if (pageTitle.includes('Access Denied') || pageTitle.includes('Reference #')) {
+              throw new Error('AKAMAI_BLOCK_PAGE');
+            }
+            // ----------------------------------------------
+
+            if (colorCheck.success || !task.targetColorRGB) {
+              break; // DETECTED! Exit retry loop and proceed
+            }
+
+            if (attempt < MAX_RETRIES) {
+              logger.warn(`[Wait] Кнопку кольору не знайдено. Очікування оновлення UI (Спроба ${attempt}/${MAX_RETRIES})...`);
+              await delay(PAUSE_BETWEEN_RETRIES);
+            }
+          } // End of Retry Loop
+
+          if (!colorCheck.success && task.targetColorRGB) {
+            logger.error(`❌ [Error] Колір не знайдено на сторінці після ${MAX_RETRIES} спроб (Expected: ${task.targetColorRGB}).`);
+
+            await SniperTask.findByIdAndUpdate(task._id, { status: 'failed' });
+            if (page) await page.close().catch(() => { });
+            activePages.delete(task._id.toString());
+            break; // Exit Sniper Loop (Task Failed)
+
+          } else if (colorCheck.success && task.targetColorRGB) {
+            logger.success(`✅ [Success] Колір вибрано візуально: ${task.targetColorRGB}.`);
+          }
+
+          // 2. Perform DOM Check & Interaction (Color/Size)
+          // Reuse existing logic
+          let uiAvailability = await checkSkuAvailability(page, task.skuId, task.selectedColor, task.selectedSize, logger);
+
+          if (uiAvailability.available) {
+            logger.success(`[Execution] DOM Confirmed Stock! Entering Checkout Queue...`);
+
+            // 3. PRIORITY QUEUE & LOCKING
+            // Determine priority: 1 if low_stock, 0 otherwise
+            const priority = detectedAvailability === 'low_stock' ? 1 : 0;
+
+            logger.log(`[QUEUE] Requesting Checkout Lock (Priority: ${priority})...`);
+            await requestCheckoutLock(task._id, priority);
+            logger.log(`[LOCK] 🔒 Checkout Lock Acquired!`);
+
+            try {
+              // 4. API RE-VERIFICATION (As requested)
+              logger.log(`[Verification] Re-checking API before purchase...`);
+
+              // Only strictly enforce API check if we have CONFIDENCE in our SKU (isSkuValidated = true)
+              // If we are running on "Blind Faith" (DOM said yes, but API mismatch), we skip this check to avoid false negative.
+              if (isSkuValidated) {
+                const reCheck = await checkAvailability(storeId, productId, task.skuId, {
+                  color: task.selectedColor?.name,
+                  size: task.selectedSize?.name
+                });
+                const reTarget = reCheck?.skusAvailability?.find(s => s.sku == task.skuId);
+                const isStillAvailable = reTarget && (reTarget.availability === 'in_stock' || reTarget.availability === 'low_stock');
+
+                if (!isStillAvailable) {
+                  logger.warn(`[Execution] ❌ Re-verification FAILED (SKU Validated). Item gone or API lag. Releasing lock.`);
+                  throw new Error('API Re-verification Failed');
+                }
+                logger.success(`[Verification] ✅ API Confirms Availability: ${reTarget.availability}`);
+              } else {
+                logger.warn(`[Verification] ⚠️ SKU not validated via API yet. Skipping strict Re-verification and trusting DOM availability.`);
+              }
+
+              // 5. Add to Cart & Checkout
+              await addToCart(page, uiAvailability.element, task.selectedColor, logger);
+              const verified = await verifyCartAddition(page, logger);
+
+              if (verified) {
+                await SniperTask.findByIdAndUpdate(task._id, { status: 'at_checkout' });
+
+                // Watchdog definition inside lock scope
+                const lockWatchdog = setTimeout(() => {
+                  if (isCheckoutLocked) {
+                    console.error(`[WATCHDOG] ⚠️ Force releasing checkout lock after ${CHECKOUT_MAX_LOCK_TIME}ms`);
+                    releaseCheckoutLock();
+                  }
+                }, CHECKOUT_MAX_LOCK_TIME);
+
+                try {
+                  await proceedToCheckout(page, telegramBot, task._id, task.userId, task.productName, task.selectedSize?.name, task.selectedColor?.name, logger, purchaseStartTime);
+                  clearTimeout(lockWatchdog);
+                  return; // Exit loop
+                } catch (chkErr) {
+                  clearTimeout(lockWatchdog);
+                  throw chkErr;
+                }
+              } else {
+                throw new Error('Failed to verify cart addition');
+              }
+            } finally {
+              // ALWAYS RELEASE LOCK
+              if (isCheckoutLocked) {
+                releaseCheckoutLock();
+                logger.log(`[LOCK] 🔓 Checkout Lock Released.`);
+              }
+            }
+
+          } else {
+            logger.warn(`[Execution] ❌ DOM Reporting Sold Out (Phantom Stock?). Returning to API Monitor.`);
+            // IMPORTANT: If we came here from 'processing', we MUST switch to 'hunting' now to prevent infinite loop
+            await SniperTask.findByIdAndUpdate(task._id, { status: 'hunting' });
+            task.status = 'hunting';
+          }
+
+        } catch (browserError) {
+          // --- PROXY ROTATION HANDLER ---
+          if (browserError.message === 'AKAMAI_BLOCK_PAGE' || browserError.message.includes('403') || browserError.message.includes('429')) {
+            logger.warn(`[Anti-Bot] 🚨 BLOCK DETECTED! Initiating Proxy Rotation...`);
+
+            // 1. Rotate Proxy
+            proxyManager.getNextProxy();
+
+            // 2. Close Browser (Hard)
+            await closeBrowser();
+
+            // 3. Clear active pages
+            activePages.clear();
+
+            // 4. Force Re-init with new Proxy in next loop
+            logger.log('[Anti-Bot] 🔄 Restarting browser with NEW PROXY and FINGERPRINT...');
+
+            // Wait a bit to cool down
+            await delay(2000);
+
+            // Restart loop (attempts won't increment effectively acting as infinite retry on rotation)
+            continue;
+          }
+          // ------------------------------
+
+          logger.error(`[Execution] Browser Error: ${browserError.message}`);
+          await takeScreenshot(page, `screenshots/execution-error-${Date.now()}.png`);
+
+          // Revert to hunting on error
           await SniperTask.findByIdAndUpdate(task._id, { status: 'hunting' });
           task.status = 'hunting';
         }
+      }
 
-      } catch (browserError) {
-        // --- PROXY ROTATION HANDLER ---
-        if (browserError.message === 'AKAMAI_BLOCK_PAGE' || browserError.message.includes('403') || browserError.message.includes('429')) {
-          logger.warn(`[Anti-Bot] 🚨 BLOCK DETECTED! Initiating Proxy Rotation...`);
+      // Cleanup if loop ends
+      if (page) {
+        const isUserStopped = ['stopped', 'paused', 'completed'].includes(task.status);
 
-          // 1. Rotate Proxy
-          proxyManager.getNextProxy();
+        // "Виправлення закриття вкладки: Заборони закривати вкладку, якщо targetSkuId ще не був успішно провалідований"
+        // We only close if:
+        // 1. SKU was validated (normal behavior)
+        // 2. OR User explicitly stopped/paused the task
+        // 3. OR Task completed
 
-          // 2. Close Browser (Hard)
-          await closeBrowser();
-
-          // 3. Clear active pages
-          activePages.clear();
-
-          // 4. Force Re-init with new Proxy in next loop
-          logger.log('[Anti-Bot] 🔄 Restarting browser with NEW PROXY and FINGERPRINT...');
-
-          // Wait a bit to cool down
-          await delay(2000);
-
-          // Restart loop (attempts won't increment effectively acting as infinite retry on rotation)
-          continue;
+        if (isSkuValidated || isUserStopped) {
+          if (!page.isClosed()) await page.close().catch(() => { });
+          activePages.delete(task._id.toString());
+        } else {
+          console.warn(`[Sniper] Loop ended but SKU not validated. Keeping page open for recovery (Task: ${task._id})`);
+          // We DO NOT delete from activePages, allowing re-use
         }
-        // ------------------------------
-
-        logger.error(`[Execution] Browser Error: ${browserError.message}`);
-        await takeScreenshot(page, `screenshots/execution-error-${Date.now()}.png`);
-
-        // Revert to hunting on error
-        await SniperTask.findByIdAndUpdate(task._id, { status: 'hunting' });
-        task.status = 'hunting';
-      }
-    }
-
-    // Cleanup if loop ends
-    if (page) {
-      const isUserStopped = ['stopped', 'paused', 'completed'].includes(task.status);
-
-      // "Виправлення закриття вкладки: Заборони закривати вкладку, якщо targetSkuId ще не був успішно провалідований"
-      // We only close if:
-      // 1. SKU was validated (normal behavior)
-      // 2. OR User explicitly stopped/paused the task
-      // 3. OR Task completed
-
-      if (isSkuValidated || isUserStopped) {
-        if (!page.isClosed()) await page.close().catch(() => { });
-        activePages.delete(task._id.toString());
       } else {
-        console.warn(`[Sniper] Loop ended but SKU not validated. Keeping page open for recovery (Task: ${task._id})`);
-        // We DO NOT delete from activePages, allowing re-use
+        activePages.delete(task._id.toString());
       }
-    } else {
-      activePages.delete(task._id.toString());
-    }
 
-  } catch (error) {
-    logger.error(`Critical Error: ${error.message}`);
-    if (page) await page.close().catch(() => { });
-    activePages.delete(task._id.toString());
-    throw error;
+    } catch (error) {
+      logger.error(`Critical Error: ${error.message}`);
+      if (page) await page.close().catch(() => { });
+      activePages.delete(task._id.toString());
+      throw error;
+    }
+  } catch (err) {
+    logger.error(`[Sniper Loop] Critical Failure: ${err.message}`);
   }
 }
 
