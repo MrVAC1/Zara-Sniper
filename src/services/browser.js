@@ -402,8 +402,17 @@ export async function initBrowser(userDataDir) {
     }
 
     // Inject the fingerprint (generated or fallback)
-    await fingerprintInjector.attachFingerprintToPlaywright(globalContext, fingerprint);
-    console.log('[Stealth] Fingerprint injected successfully.');
+    try {
+      await fingerprintInjector.attachFingerprintToPlaywright(globalContext, fingerprint);
+      console.log('[Stealth] Fingerprint injected successfully.');
+    } catch (fpError) {
+      console.warn(`[Stealth] ⚠️ Failed to inject fingerprint (Browser closed?): ${fpError.message}`);
+      // Proceed without fingerprint if critical failure, or re-throw if needed. 
+      // If browser is closed, next steps will fail anyway.
+      if (fpError.message.includes('closed') || fpError.message.includes('Target page')) {
+        throw fpError; // Re-throw to trigger cleanup in catch block
+      }
+    }
     // ------------------------------------
 
     // Apply Additional Stealth Scripts (Optional / Supplementary)

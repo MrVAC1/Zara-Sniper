@@ -63,9 +63,21 @@ const originalLog = console.log;
 const originalWarn = console.warn;
 const originalError = console.error;
 
-console.log = (...args) => originalLog(logPrefix, ...args);
-console.warn = (...args) => originalWarn(logPrefix, ...args);
-console.error = (...args) => originalError(logPrefix, ...args);
+console.log = (...args) => {
+  if (args.length > 0 && typeof args[0] === 'string') {
+    if (args[0] === '') return originalLog('');
+    if (args[0].includes('[Owner:')) return originalLog(...args);
+  }
+  originalLog(logPrefix, ...args);
+};
+console.warn = (...args) => {
+  if (args.length > 0 && typeof args[0] === 'string' && args[0].includes('[Owner:')) return originalWarn(...args);
+  originalWarn(logPrefix, ...args);
+};
+console.error = (...args) => {
+  if (args.length > 0 && typeof args[0] === 'string' && args[0].includes('[Owner:')) return originalError(...args);
+  originalError(logPrefix, ...args);
+};
 // -----------------------------
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -211,9 +223,13 @@ bot.action(/^select_size:(.+):(.+)$/, async (ctx) => {
 bot.on('text', async (ctx) => {
   const text = ctx.message.text;
 
-  // Перевірка чи це URL
+  // Перевірка чи це URL і чи це Zara
   if (text.match(/^https?:\/\//)) {
-    await handleProductUrl(ctx, text);
+    if (text.includes('zara.com')) {
+      await handleProductUrl(ctx, text);
+    } else {
+      await ctx.reply('❌ Я працюю тільки з посиланнями на zara.com');
+    }
   }
 });
 

@@ -5,11 +5,13 @@ import { checkAuthSession, handleCaptcha } from './errorHandler.js';
 import taskQueue from './taskQueue.js';
 import dotenv from 'dotenv';
 import fs from 'fs/promises';
+import path from 'path';
 import { checkAvailability, STORE_IDS } from './zaraApi.js';
 import { refreshSession } from './tokenManager.js';
 import { triggerIpGuard, isSystemPaused } from './healthGuard.js';
 import { parseProductOptions } from './zaraParser.js';
 import { reportError } from './logService.js';
+import { getBotId } from '../utils/botUtils.js';
 
 dotenv.config();
 
@@ -1208,8 +1210,13 @@ async function sniperLoop(task, telegramBot, logger) {
     if (!browserContext) {
       logger.warn('[Sniper] Browser context missing. Attempting auto-recovery...');
       try {
-        // Re-init without args relies on lastUserDataDir in browser.js
-        browserContext = await initBrowser();
+        const ownerIdFull = process.env.OWNER_ID || 'default';
+        const primaryOwner = ownerIdFull.split(',')[0].trim();
+        const sanitizedPidOwner = primaryOwner.replace(/[^a-zA-Z0-9]/g, '');
+        const userDataDir = path.join(process.cwd(), `zara_user_profile_${sanitizedPidOwner}`);
+
+        // Re-init with explicit userDataDir
+        browserContext = await initBrowser(userDataDir);
       } catch (e) {
         logger.error(`[Sniper] Recovery failed: ${e.message}`);
       }
@@ -1297,13 +1304,16 @@ async function sniperLoop(task, telegramBot, logger) {
         let browser = await getBrowser();
         if (!browser) {
           const proxy = proxyManager.getPlaywrightProxy();
-          browser = await initBrowser(undefined, proxy); // undefined userDataDir (uses cached or error)
-          // Actually, initBrowser requires userDataDir. 
-          // We rely on getBrowser() being null meaning we need to init from scratch? 
-          // Use 'await initBrowser()' in main loop passed userDataDir.
-          // Wait, initPage relies on global 'initBrowser' holding the state.
-          // We need to make sure we force close browser if rotating.
+
+          // Calculate userDataDir (replicated logic)
+          const ownerIdFull = process.env.OWNER_ID || 'default';
+          const primaryOwner = ownerIdFull.split(',')[0].trim();
+          const sanitizedPidOwner = primaryOwner.replace(/[^a-zA-Z0-9]/g, '');
+          const userDataDir = path.join(process.cwd(), `zara_user_profile_${sanitizedPidOwner}`);
+
+          browser = await initBrowser(userDataDir, proxy);
         }
+
 
         page = await createTaskPage(task._id);
 
@@ -1362,6 +1372,13 @@ async function sniperLoop(task, telegramBot, logger) {
                 task.status = freshTask ? freshTask.status : 'stopped';
                 break;
               }
+
+              // User Request: Log Task Index
+              const currentBotId = getBotId();
+              const huntingTasks = await SniperTask.find({ botId: currentBotId, status: 'hunting' }).select('_id').sort({ _id: 1 });
+              const taskIndex = huntingTasks.findIndex(t => t._id.toString() === task._id.toString()) + 1;
+              console.log(''); // Empty line for readability
+              logger.log(`[Status] 🔭 Monitoring Item ${taskIndex}/${huntingTasks.length}: ${task.productName}`);
 
               // 2. API Check
               // logger.log(`[API] Checking availability...`);
@@ -1524,6 +1541,7 @@ async function sniperLoop(task, telegramBot, logger) {
 
               // 3. Wait
               await delay(API_MONITORING_INTERVAL);
+              await delay(100); // Extra pause as requested
               attempts++; // Count API attempts as "activity"
 
               if (attempts % 10 === 0) {
@@ -1775,8 +1793,15 @@ export async function stopAndCloseTask(taskId) {
   const page = activePages.get(taskId.toString());
   if (page) {
     try {
-      await page.close();
-      console.log(`[Task ${taskId}] Page closed.`);
+      const context = page.context();
+      if (context.pages().length > 1) {
+        await page.close();
+        console.log(`[Task ${taskId}] Page closed.`);
+      } else {
+        console.log(`[Task ${taskId}] Last tab protected (not closing).`);
+        // Navigate to home instead? Or just leave it.
+        await page.goto('https://www.zara.com/ua/uk/').catch(() => { });
+      }
     } catch (e) { }
     activePages.delete(taskId.toString());
   }

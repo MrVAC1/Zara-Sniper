@@ -66,7 +66,7 @@ export async function checkAvailability(storeId, productId, targetSkuId = null, 
             }
         }
 
-        // LOGIC FOR SKU DEBUGGING ALWAYS (Requested by User)
+        if (isDebug) console.log(''); // Empty line for readability as requested
         if (targetSkuId && data.skusAvailability) {
             const targetSku = data.skusAvailability.find(s => s.sku == targetSkuId); // Use loose equality for safety
             if (!targetSku) {

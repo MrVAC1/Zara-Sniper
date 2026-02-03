@@ -1,6 +1,7 @@
 import SniperTask from '../models/SniperTask.js';
 import User from '../models/User.js';
 import { parseProductOptions } from './zaraParser.js';
+import { getBotId } from '../utils/botUtils.js';
 
 
 /**
@@ -150,18 +151,20 @@ export default queue;
  */
 export async function initializeActiveTasks(context, telegramBot) {
   try {
-    console.log('🔄 [Bootstrap] Starting Cold Start restoration...');
+    const CURRENT_BOT_ID = getBotId();
+    console.log(`🔄 [Bootstrap] Starting Cold Start restoration for Bot ID: ${CURRENT_BOT_ID}...`);
 
-    // 1. Пошук активних завдань (Глобальний режим - ігноруємо прив'язку до власника для відновлення)
-    // Ми хочемо відновити ВСІ завдання, що є в базі
-    console.log('[Bootstrap] Fetching all active tasks globally...');
+    // 1. Пошук активних завдань (Filter by Bot ID)
+    // Ми відновлюємо ТІЛЬКИ завдання, що належать цьому боту
+    console.log('[Bootstrap] Fetching active tasks for this bot...');
 
     const tasks = await SniperTask.find({
+      botId: CURRENT_BOT_ID,
       status: { $in: ['SEARCHING', 'HUNTING', 'PENDING', 'MONITORING', 'hunting', 'processing'] }
     });
 
     if (tasks.length === 0) {
-      console.log('✅ [Bootstrap] No active tasks found in DB.');
+      console.log('✅ [Bootstrap] No active tasks found for this bot.');
       return;
     }
 

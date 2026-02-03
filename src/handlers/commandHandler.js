@@ -347,10 +347,9 @@ export async function handleTaskScreenshot(ctx, taskId) {
  * Команда /screenshot - глобальний скріншот (всі активні вкладки)
  */
 export async function handleGlobalScreenshot(ctx) {
-  const userId = ctx.from.id.toString();
-  const ownerId = process.env.OWNER_ID ? process.env.OWNER_ID.split(',')[0].trim() : '';
-
-  if (userId !== ownerId) {
+  // Use isOwner helper for access control
+  const { isOwner } = await import('../utils/auth.js');
+  if (!isOwner(userId)) {
     return ctx.reply('⛔ Тільки власник може використовувати цю команду.');
   }
 
@@ -462,7 +461,9 @@ export async function handleDeleteMenu(ctx) {
 
   if (!user) return ctx.reply('❌ Користувача не знайдено');
 
-  const tasks = await SniperTask.find({ userId: user._id });
+  // Shared Workspace: Show all tasks for this BOT, not just user's
+  // const tasks = await SniperTask.find({ userId: user._id });
+  const tasks = await SniperTask.find({ botId: CURRENT_BOT_ID });
 
   if (tasks.length === 0) {
     return ctx.reply('📭 Список завдань порожній.');
@@ -540,7 +541,9 @@ export async function handleDeleteAll(ctx) {
 
   if (!user) return;
 
-  const tasks = await SniperTask.find({ userId: user._id });
+  // Shared Workspace: Delete ALL tasks for this BOT
+  // const tasks = await SniperTask.find({ userId: user._id });
+  const tasks = await SniperTask.find({ botId: CURRENT_BOT_ID });
 
   for (const task of tasks) {
     await stopAndCloseTask(task._id);
@@ -604,11 +607,9 @@ export async function handleHelp(ctx) {
  * Команда /logs - перегляд останніх логів
  */
 export async function handleLogs(ctx) {
-  const userId = ctx.from.id.toString();
-  const ownerId = process.env.OWNER_ID ? process.env.OWNER_ID.split(',')[0].trim() : '';
-
-  // Ensure only owner can see system logs
-  if (userId !== ownerId) {
+  // Use isOwner helper for access control
+  const { isOwner } = await import('../utils/auth.js');
+  if (!isOwner(userId)) {
     return ctx.reply('⛔ Бот працює в Shared Mode. Логи доступні лише адміністратору.');
   }
 
