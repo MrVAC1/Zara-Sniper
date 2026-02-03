@@ -94,6 +94,7 @@ const {
   TIMEOUT_PAY_BUTTON,
   API_MONITORING_INTERVAL,
   AKAMAI_BAN_DELAY,
+  AKAMAI_CHECKOUT_PAUSE,
   IN_STOCK_RECOVERY_TIMEOUT
 } = getTimeConfig();
 
@@ -261,7 +262,7 @@ export async function fullRestart(telegramBot) {
       try {
         console.log('[Watchdog] Checking session health...');
         await checkPage.goto('https://www.zara.com/ua/uk/', { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 500)); // OPTIMIZED: was 2000
 
         const isLoggedIn = await checkPage.evaluate(() => {
           const text = document.body.innerText;
@@ -289,7 +290,7 @@ export async function fullRestart(telegramBot) {
   } catch (e) { }
 
   // 5. Short delay before re-init
-  await new Promise(r => setTimeout(r, 2000));
+  await new Promise(r => setTimeout(r, 500)); // OPTIMIZED: was 2000
 
   // 6. Re-trigger all hunting tasks from DB
   try {
@@ -341,6 +342,29 @@ export function startGlobalWatchdog(telegramBot) {
       });
 
       if (huntingTasksCount > 0) {
+        // --- SESSION MONITORING (NEW) ---
+        try {
+          const context = await getBrowser();
+          if (context) {
+            const cookies = await context.cookies();
+            const sessionCookie = cookies.find(c => c.name === 'Z_SESSION_ID' || c.name === 'itx-v-ev');
+
+            if (!sessionCookie) {
+              console.error('[Watchdog] 🚨 SESSION LOST! Critical session cookie missing during active hunting.');
+
+              sessionLogger.log('ERROR', {
+                context: 'SESSION_PROTECTION',
+                message: `Session lost during hunting (${huntingTasksCount} active tasks). Attempting recovery...`
+              });
+
+              await handleSessionLoss(telegramBot, huntingTasksCount);
+            }
+          }
+        } catch (sessionErr) {
+          console.warn(`[Watchdog] Session check failed: ${sessionErr.message}`);
+        }
+        // --- END SESSION MONITORING ---
+
         const inactiveTime = Date.now() - lastGlobalActivity;
 
         if (inactiveTime > THRESHOLD_MS) {
@@ -372,6 +396,78 @@ export function startGlobalWatchdog(telegramBot) {
       console.error(`[Watchdog] Error in loop: ${err.message}`);
     }
   }, CHECK_INTERVAL_MS);
+}
+
+/**
+ * Handle session loss - pause tasks and recover from browser profile
+ */
+async function handleSessionLoss(telegramBot, affectedTaskCount) {
+  try {
+    console.log('[Session Protection] 🔄 Attempting to recover session from browser profile...');
+
+    // 1. Send Telegram alert
+    if (telegramBot) {
+      const currentBotId = getBotId();
+      const ownerId = process.env.OWNER_ID.split(',')[0].trim();
+      await telegramBot.sendMessage(
+        ownerId,
+        `🚨 *SESSION LOST DURING HUNTING*\n\n` +
+        `Active tasks: ${affectedTaskCount}\n` +
+        `Bot ID: ${currentBotId}\n` +
+        `Attempting automatic recovery...`,
+        { parse_mode: 'Markdown' }
+      ).catch(() => { });
+    }
+
+    // 2. Try to recover session from persistent browser context
+    const context = await getBrowser();
+    if (context) {
+      // The persistent context automatically maintains cookies from the profile
+      // We just need to verify they're back
+      await new Promise(r => setTimeout(r, 2000)); // Wait for profile sync
+
+      const cookies = await context.cookies();
+      const sessionCookie = cookies.find(c => c.name === 'Z_SESSION_ID' || c.name === 'itx-v-ev');
+
+      if (sessionCookie) {
+        console.log('[Session Protection] ✅ Session recovered successfully from browser profile!');
+
+        sessionLogger.log('SUCCESS', {
+          context: 'SESSION_PROTECTION',
+          message: `Session recovered automatically. ${affectedTaskCount} tasks can continue.`
+        });
+
+        if (telegramBot) {
+          const ownerId = process.env.OWNER_ID.split(',')[0].trim();
+          await telegramBot.sendMessage(
+            ownerId,
+            `✅ *SESSION RECOVERED*\n\nAll tasks can continue normally.`,
+            { parse_mode: 'Markdown' }
+          ).catch(() => { });
+        }
+      } else {
+        throw new Error('Session recovery failed - cookies still missing');
+      }
+    }
+  } catch (recoveryErr) {
+    console.error(`[Session Protection] ❌ Recovery failed: ${recoveryErr.message}`);
+
+    sessionLogger.log('ERROR', {
+      context: 'SESSION_PROTECTION',
+      message: `Session recovery FAILED: ${recoveryErr.message}. Manual re-login required.`
+    });
+
+    if (telegramBot) {
+      const ownerId = process.env.OWNER_ID.split(',')[0].trim();
+      await telegramBot.sendMessage(
+        ownerId,
+        `❌ *SESSION RECOVERY FAILED*\n\n` +
+        `Error: ${recoveryErr.message}\n\n` +
+        `Please run: \`npm run login\` to restore session manually.`,
+        { parse_mode: 'Markdown' }
+      ).catch(() => { });
+    }
+  }
 }
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -685,7 +781,7 @@ export async function addToCart(page, sizeElement, selectedColor, logger) {
 
         if (!success) {
           logger.warn('[Backtrack] Size menu NOT visible. Waiting 2s and retrying toggle...');
-          await delay(2000);
+          await delay(500); // OPTIMIZED: was 2000
           // Re-click triggers
           for (const selector of triggerSelectors) {
             await humanClick(page, selector).catch(() => { });
@@ -912,6 +1008,11 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
   const finalChatId = firstOwner || userId;
   const screenshots = [];
 
+  // Akamai Block Flag
+  let isAkamaiBlocked = false;
+  let akamaiBlockCount = 0;
+  const MAX_AKAMAI_RETRIES = 2;
+
   // --- 30s CHECKOUT WATCHDOG --- (Protect against stuck process)
   const CHECKOUT_HARD_TIMEOUT = 45000;
   let checkoutTimeout = null;
@@ -921,6 +1022,32 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
       await reportError(page, new Error('Checkout Timeout (>45s)'), 'Checkout Watchdog');
     }, CHECKOUT_HARD_TIMEOUT);
   }
+
+  // --- AKAMAI 403 RESPONSE MONITOR ---
+  page.on('response', async (response) => {
+    try {
+      if (response.status() === 403 && response.url().includes('checkout')) {
+        isAkamaiBlocked = true;
+        akamaiBlockCount++;
+        logger.error(`[Akamai] 🛡️ CHECKOUT BLOCKED (403)! Block #${akamaiBlockCount}`);
+
+        sessionLogger.log('ERROR', {
+          context: 'AKAMAI_CHECKOUT_BLOCK',
+          taskId,
+          message: `Akamai 403 during checkout. URL: ${response.url()}. Pausing ${AKAMAI_CHECKOUT_PAUSE / 1000}s...`
+        });
+
+        if (telegramBot && finalChatId) {
+          await telegramBot.telegram.sendMessage(
+            finalChatId,
+            `🛡️ *Akamai блок під час чекауту!*\n\nПауза на ${AKAMAI_CHECKOUT_PAUSE / 60000} хв...`,
+            { parse_mode: 'Markdown' }
+          ).catch(() => { });
+        }
+      }
+    } catch (e) { }
+  });
+  // ------------------------------
 
   try {
     logger.log(`🚀 [Checkout] Starting automated checkout flow for ChatID: ${finalChatId}`);
@@ -1184,18 +1311,36 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
         }
 
         if (elType === 'continue') {
-          logger.log(`[Checkout] Step ${attempts}: Clicked 'Continue/Checkout'`);
+          logger.log(`[Checkout] Step ${attempts}: Clicking 'Continue/Checkout'...`);
+
+          // Check for Akamai block before proceeding
+          if (isAkamaiBlocked && akamaiBlockCount <= MAX_AKAMAI_RETRIES) {
+            logger.warn(`[Akamai] Pausing for ${AKAMAI_CHECKOUT_PAUSE / 1000}s before retrying...`);
+            await delay(AKAMAI_CHECKOUT_PAUSE);
+            isAkamaiBlocked = false; // Reset flag
+            logger.log('[Akamai] Pause complete. Retrying checkout step...');
+          } else if (akamaiBlockCount > MAX_AKAMAI_RETRIES) {
+            logger.error('[Akamai] Max retries exceeded. Aborting checkout.');
+            throw new Error('Akamai Block - Max Retries Exceeded');
+          }
+
+          const currentUrl = page.url();
           await foundEl.click({ force: true });
 
+          // Wait for navigation or URL change (validation)
+          try {
+            await Promise.race([
+              page.waitForNavigation({ timeout: 5000 }).catch(() => null),
+              page.waitForURL(url => url !== currentUrl, { timeout: 5000 }).catch(() => null)
+            ]);
+            logger.success(`[Checkout] Step ${attempts}: Continue successful (URL changed)`);
+          } catch (navErr) {
+            logger.warn(`[Checkout] Continue clicked but navigation unclear: ${navErr.message}`);
+          }
+
           // SAVE THIS SELECTOR AS PREVIOUS ACTION
-          // We need a specific selector to find it again.
-          // We can use a generic one or try to be specific.
-          // To be robust, we use the GENERIC type selector that found it.
           lastActionSelector = actionSelectors.continue;
           if (await page.$(actionSelectors.checkout)) lastActionSelector = actionSelectors.checkout;
-          // Ideally we'd store the specific selector that matched, but we used combined.
-          // Let's update lastAction more smartly if possible. 
-          // For now, defaulting to the 'continue' group is safe as they are usually mutually exclusive per page.
 
           // Handle Modal on first step (Out of stock)
           if (attempts === 1) {
@@ -1574,6 +1719,11 @@ async function sniperLoop(task, telegramBot, logger) {
       await initPage();
       logger.log(`[Hybrid Sniper] Started for ${task.productName} [${task.selectedSize?.name}]`, true);
 
+      // Pre-hunting delay to avoid instant API spam (looks more natural)
+      const initialDelay = Math.floor(Math.random() * 2000) + 3000; // 3-5 seconds
+      logger.log(`[Sniper] Waiting ${(initialDelay / 1000).toFixed(1)}s before starting hunt...`, true);
+      await delay(initialDelay);
+
       while ((task.status === 'hunting' || task.status === 'processing') && attempts < task.maxAttempts) {
 
         // --- PHASE 1: API MONITORING (The Hunter) ---
@@ -1619,8 +1769,9 @@ async function sniperLoop(task, telegramBot, logger) {
                   size: task.selectedSize?.name
                 });
 
-                // Sequential Delay: Ensure logs from next task don't start for at least 200ms
-                await delay(200);
+                // Sequential Delay: Wait API_MONITORING_INTERVAL before allowing next task to proceed
+                await delay(API_MONITORING_INTERVAL);
+                await delay(200); // Additional inter-task pause
                 updateGlobalActivity(); // Activity confirmed
               } finally {
                 apiSemaphore.release();
@@ -1781,9 +1932,7 @@ async function sniperLoop(task, telegramBot, logger) {
                 }
               }
 
-              // 3. Wait
-              await delay(API_MONITORING_INTERVAL);
-              await delay(200); // Increased pause as requested (was 100ms)
+              // No longer need delay here - it's now in the semaphore release block
               attempts++; // Count API attempts as "activity"
 
               if (attempts % 10 === 0) {
@@ -1793,13 +1942,22 @@ async function sniperLoop(task, telegramBot, logger) {
 
             } catch (err) {
               if (err.message === 'AKAMAI_BLOCK') {
-                logger.warn(`[Akamai Defense] 🛡️ 401/403 Detected. Pausing for ${AKAMAI_BAN_DELAY / 1000}s...`);
+                logger.error(`[Akamai Defense] 🛡️ IP BLOCK (401/403) Detected!`);
+                logger.warn(`[Akamai Defense] Pausing for ${AKAMAI_BAN_DELAY / 1000}s...`);
+
+                // Log to negative file
+                sessionLogger.log('ERROR', {
+                  context: 'AKAMAI_BLOCK',
+                  taskId: task._id,
+                  message: `IP Block detected (401/403). Pausing ${AKAMAI_BAN_DELAY / 1000}s before retry. Product: ${task.productName}`
+                });
+
                 await delay(AKAMAI_BAN_DELAY);
                 await refreshSession();
               } else if (err.message === 'BROWSER_DISCONNECTED' || err.message.includes('Cannot read properties of null')) {
                 logger.warn('[Sniper] ⚠️ Browser Disconnected/Crashed. Re-initializing...');
                 try { await initBrowser(); } catch (e) { logger.error(`[Sniper] Init failed: ${e.message}`); }
-                await delay(2000);
+                await delay(1000); // OPTIMIZED: was 2000
               } else {
                 logger.warn(`[API] Error: ${err.message}. Retrying...`);
                 await delay(API_MONITORING_INTERVAL);

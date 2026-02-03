@@ -396,11 +396,9 @@ async function main() {
     // Initial Session Sync Start
     startSessionSync(context);
 
-    // FIX: Darwin 20 Stability Pause
-    console.log('⏳ Waiting 5s for browser stabilization (Legacy macOS fix)...');
-    await new Promise(resolve => setTimeout(resolve, 5000));
-
-    // Start Auto-Cleanup (Delayed 5 min to prevent crash on startup)
+    // Wait for browser to stabilize (especially on Legacy macOS)
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    console.log(`[Owner: ${process.env.OWNER_ID.split(',')[0].trim()}] ⏳ Waiting 2s for browser stabilization... [OPTIMIZED: was 5s]`);
     setTimeout(() => {
       startAutoCleanup(context, activePages);
     }, 300000);

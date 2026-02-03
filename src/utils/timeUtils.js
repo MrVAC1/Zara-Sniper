@@ -82,5 +82,6 @@ export const getTimeConfig = () => ({
 
   // Hybrid Sniper Config
   API_MONITORING_INTERVAL: parseInt(process.env.API_MONITORING_INTERVAL) || 500,
-  AKAMAI_BAN_DELAY: parseInt(process.env.AKAMAI_BAN_DELAY) || 45000
+  AKAMAI_BAN_DELAY: parseInt(process.env.AKAMAI_BAN_DELAY) || 45000,
+  AKAMAI_CHECKOUT_PAUSE: parseInt(process.env.AKAMAI_CHECKOUT_PAUSE) || 150000
 });

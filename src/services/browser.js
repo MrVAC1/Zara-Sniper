@@ -273,7 +273,7 @@ export async function initBrowser(userDataDir = USER_DATA_DIR) {
       console.log('🌐 [Session] Warming up context: Navigating to Zara...');
       try {
         await page.goto('https://www.zara.com/ua/uk/', { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await new Promise(r => setTimeout(r, 2000)); // Wait for hydration
+        await new Promise(r => setTimeout(r, 1000)); // Wait for hydration [OPTIMIZED: was 2000]
         await handleStoreRedirect(page); // Handle modal after warmup navigation
       } catch (navErr) {
         console.warn(`[Session] Warm-up navigation failed: ${navErr.message}`);
