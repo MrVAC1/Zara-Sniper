@@ -1620,6 +1620,7 @@ async function sniperLoop(task, telegramBot, logger) {
 
                   if (targetSku.availability === 'in_stock' || targetSku.availability === 'low_stock') {
                     logger.success(`[API Hunter] 🎯 TARGET DETECTED! SKU: ${task.skuId} is ${targetSku.availability}`);
+                    sessionLogger.promoteToPositive(task._id); // Force all logs for this task to positive from now on
                     detectedAvailability = targetSku.availability; // Capture status for priority
                     apiFound = true;
                     break; // EXIT API LOOP -> GO TO BROWSER
@@ -1710,6 +1711,7 @@ async function sniperLoop(task, telegramBot, logger) {
                         // Optional: Check availability immediately from payload
                         if (repairResult.availability === 'in_stock' || repairResult.availability === 'low_stock') {
                           logger.success(`[Auto-Correction] Payload says IN STOCK! Switching to execution.`);
+                          sessionLogger.promoteToPositive(task._id); // Force all logs for this task to positive
                           apiFound = true;
                           break;
                         }

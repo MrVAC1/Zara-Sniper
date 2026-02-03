@@ -8,6 +8,7 @@ class SessionLogger {
     this.negativeLogFile = null;
     this.globalApiCount = 0;
     this.taskApiCounts = new Map();
+    this.forcePositiveTasks = new Set();
 
     if (!fs.existsSync(this.logDir)) {
       fs.mkdirSync(this.logDir, { recursive: true });
@@ -21,6 +22,7 @@ class SessionLogger {
   startNewSession() {
     this.globalApiCount = 0;
     this.taskApiCounts.clear();
+    this.forcePositiveTasks.clear();
 
     const now = new Date();
     const day = String(now.getDate()).padStart(2, '0');
@@ -111,7 +113,7 @@ class SessionLogger {
 
     // Запис у відповідний файл
     let targetFile = null;
-    if (level === 'SUCCESS' || level === 'INFO') {
+    if (level === 'SUCCESS' || level === 'INFO' || (taskId && this.forcePositiveTasks.has(taskId))) {
       targetFile = this.positiveLogFile;
     } else if (level === 'ERROR' || level === 'WARN') {
       targetFile = this.negativeLogFile;
@@ -123,6 +125,17 @@ class SessionLogger {
       } catch (fsErr) {
         console.error(`[SessionLogger] Помилка запису у файл: ${fsErr.message}`);
       }
+    }
+  }
+
+  /**
+   * Позначає завдання як "успішне виявлення". 
+   * Після цього всі логи по цьому taskId (навіть помилки) йтимуть у positive файл.
+   * @param {string} taskId 
+   */
+  promoteToPositive(taskId) {
+    if (taskId) {
+      this.forcePositiveTasks.add(taskId.toString());
     }
   }
 }
