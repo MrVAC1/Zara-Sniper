@@ -71,6 +71,8 @@ class SessionLogger {
     this.forcePositiveTasks.clear();
 
     if (rotate) {
+      // CLEANUP: Check if old log files are empty and delete them
+      this._cleanupEmptyLogFiles();
       this._initFileNames();
     }
 
@@ -78,6 +80,71 @@ class SessionLogger {
       context: 'SYSTEM',
       message: `Нова сесія розпочата${rotate ? ' (Створено нові файли)' : ' (Продовження запису)'}. Лічильники скинуто.`
     });
+  }
+
+  /**
+   * Видаляє старі порожні файли логів при створенні нових.
+   * Перевіряє поточні positive та negative файли - якщо вони порожні або містять лише пробіли, видаляє їх.
+   */
+  _cleanupEmptyLogFiles() {
+    const filesToCheck = [this.positiveLogFile, this.negativeLogFile];
+
+    for (const filePath of filesToCheck) {
+      if (!filePath || !fs.existsSync(filePath)) continue;
+
+      try {
+        const stats = fs.statSync(filePath);
+        const content = fs.readFileSync(filePath, 'utf8').trim();
+
+        // Видаляємо якщо файл порожній або містить лише пробіли/переноси рядків
+        if (stats.size === 0 || content.length === 0) {
+          fs.unlinkSync(filePath);
+          console.log(`[SessionLogger] 🧹 Deleted empty log file: ${path.basename(filePath)}`);
+        }
+      } catch (e) {
+        // Ignore errors during cleanup
+        console.warn(`[SessionLogger] Cleanup warning: ${e.message}`);
+      }
+    }
+
+    // Also cleanup any old empty files in logs directory
+    this._cleanupOldEmptyLogs();
+  }
+
+  /**
+   * Сканує папку logs і видаляє всі порожні файли positive_*.txt та negative_*.txt
+   */
+  _cleanupOldEmptyLogs() {
+    try {
+      const files = fs.readdirSync(this.logDir);
+
+      for (const file of files) {
+        if (!file.match(/^(positive|negative)_.*\.txt$/)) continue;
+
+        const filePath = path.join(this.logDir, file);
+
+        try {
+          const stats = fs.statSync(filePath);
+
+          // Видаляємо файли розміром 0 байт або з лише пробілами
+          if (stats.size === 0) {
+            fs.unlinkSync(filePath);
+            console.log(`[SessionLogger] 🧹 Cleaned up empty: ${file}`);
+          } else if (stats.size < 50) {
+            // Для дуже маленьких файлів перевіряємо вміст
+            const content = fs.readFileSync(filePath, 'utf8').trim();
+            if (content.length === 0) {
+              fs.unlinkSync(filePath);
+              console.log(`[SessionLogger] 🧹 Cleaned up empty: ${file}`);
+            }
+          }
+        } catch (e) {
+          // Skip files that can't be accessed
+        }
+      }
+    } catch (e) {
+      console.warn(`[SessionLogger] Old logs cleanup error: ${e.message}`);
+    }
   }
 
   /**

@@ -184,6 +184,30 @@ class ProxyManager {
       password: proxy.password
     };
   }
+
+  /**
+   * Get proxy config for HTTP-level fetch (networkRouter)
+   * Used by https-proxy-agent and http-proxy-agent
+   */
+  getHttpProxyConfig() {
+    const proxy = this.getCurrentProxy();
+    if (!proxy) return null;
+
+    try {
+      const url = new URL(proxy.url);
+      return {
+        host: url.hostname,
+        port: url.port || (url.protocol === 'https:' ? '443' : '80'),
+        auth: proxy.username && proxy.password
+          ? `${proxy.username}:${proxy.password}`
+          : undefined,
+        protocol: url.protocol
+      };
+    } catch (e) {
+      console.error('[ProxyManager] Failed to parse proxy URL:', e.message);
+      return null;
+    }
+  }
 }
 
 // Singleton instance

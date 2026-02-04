@@ -14,7 +14,7 @@ import { checkAccess } from './middleware/security.js';
 import {
   handleStart, handleAdd, handleTasks, handleView, handlePause, handleResume, handleDelete, handleHelp, handleStop,
   handleDeleteAll, handleTaskScreenshot, handleInfo, handleDeleteMenu, handleTaskDetail, handleGlobalScreenshot,
-  handleLogs, handleRestart, handleConfirmRestart
+  handleLogs, handleRestart, handleConfirmRestart, handlePauseAll, handleResumeAll, handleUACheck
 } from './handlers/commandHandler.js';
 import { handleProductUrl, handleColorSelection, handleSizeSelection } from './handlers/productHandler.js';
 import { handleLogin } from './handlers/authHandler.js';
@@ -170,6 +170,7 @@ bot.command('screenshot', handleGlobalScreenshot);
 bot.command('logs', handleLogs);
 bot.command('login', handleLogin);
 bot.command('restart', handleRestart);
+bot.command('ua', handleUACheck); // UA Check command
 // --------------------
 
 // Обробка кнопок головного меню (Reply Keyboard)
@@ -181,6 +182,8 @@ bot.hears('🗑 Видалити', handleDeleteMenu);
 bot.hears('ℹ️ Info', handleInfo);
 bot.hears('🛑 Стоп', handleStop);
 bot.hears('🔄 Рестарт', handleRestart);
+bot.hears('⏸ Pause All', handlePauseAll);
+bot.hears('▶️ Resume All', (ctx) => handleResumeAll(ctx, bot));
 
 // Callback queries для головного меню (для сумісності, якщо старі повідомлення залишились)
 bot.action('cmd_start', handleStart);

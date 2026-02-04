@@ -13,6 +13,7 @@ import { parseProductOptions } from './zaraParser.js';
 import { reportError } from './logService.js';
 import { getBotId, Semaphore } from '../utils/botUtils.js';
 import sessionLogger from './sessionLogger.js';
+import { enterCheckoutPhase, exitCheckoutPhase } from './networkRouter.js';
 
 // Global Semaphore for serializing API checks Cross-Task
 const apiSemaphore = new Semaphore(1);
@@ -425,39 +426,58 @@ export function startGlobalWatchdog(telegramBot) {
                     { $set: { status: 'paused' } }
                   );
 
-                  // Send Telegram alert
-                  if (telegramBot) {
-                    const ownerIdEnv = process.env.OWNER_ID;
-                    const firstOwner = ownerIdEnv ? ownerIdEnv.split(',')[0].trim() : null;
-
-                    if (firstOwner) {
-                      await telegramBot.telegram.sendMessage(
-                        firstOwner,
-                        '🚨 *Сесію втрачено під час полювання!*\n\nВиявлено кнопку входу в хедері.\nВсі завдання призупинено.\n\nВикористайте `/login` для відновлення.',
-                        { parse_mode: 'Markdown' }
-                      ).catch(() => { });
-                    }
-                  }
-
                   break;
                 }
               }
 
               if (!loggedOut) {
-                // Verify account button is present (optional, for confidence)
-                const accountButton = await pages[0]?.$('[data-qa-id="layout-header-user-account"]').catch(() => null);
-                if (accountButton) {
-                  console.log('[Watchdog] ✅ LOGIN STATUS: User is logged in (account button present).');
-                }
+                // Check account button logic if needed, or just continue
               }
             }
-
             watchdogInterval.lastLoginCheck = Date.now();
-          } catch (loginCheckErr) {
-            console.warn(`[Watchdog] Login status check failed: ${loginCheckErr.message}`);
+          } catch (err) { }
+        } // End Date Check
+
+        // --- TASK HEALTH CHECK (Fix for Cleaner/Closed Tabs) ---
+        // Verify that every "hunting" task has an active, open page.
+        try {
+          // Get all tasks that claim to be hunting
+          const huntingTasks = await SniperTask.find({
+            botId: currentBotId,
+            status: { $in: ['hunting', 'HUNTING'] }
+          });
+
+          for (const task of huntingTasks) {
+            const taskId = task._id.toString();
+            const page = activePages.get(taskId);
+
+            // If page is missing OR closed, we need to restart
+            if (!page || page.isClosed()) {
+              console.warn(`[Watchdog] ⚠️ Task ${taskId} (${task.productName}) is 'hunting' but has no active page. Restarting...`);
+
+              // Remove dead reference if exists
+              if (activePages.has(taskId)) activePages.delete(taskId);
+
+              // Restart task (import dynamically to avoid circular dep blocks if any)
+              try {
+                // startSniper is exported from this file
+                startSniper(taskId, telegramBot).catch(e =>
+                  console.error(`[Watchdog] Restart failed for ${taskId}: ${e.message}`)
+                );
+
+                // Add small delay to avoid thundering herd
+                await new Promise(r => setTimeout(r, 2000));
+
+              } catch (restartErr) {
+                console.error(`[Watchdog] Manual restart trigger failed: ${restartErr.message}`);
+              }
+            }
           }
+        } catch (healthErr) {
+          console.warn(`[Watchdog] Health check error: ${healthErr.message}`);
         }
-        // --- END LOGIN STATUS VERIFICATION ---
+        // -------------------------------------------------------
+
 
         const inactiveTime = Date.now() - lastGlobalActivity;
 
@@ -1267,6 +1287,10 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
   try {
     logger.log(`🚀 [Checkout] Starting automated checkout flow for ChatID: ${finalChatId}`);
 
+    // --- ACTIVATE PROXY ROUTING FOR CHECKOUT ---
+    enterCheckoutPhase();
+    logger.log('[Network] 🔄 Transitioning to Proxy IP for Secure Checkout...');
+
     // Step 1: Go to Cart (Direct Navigation)
     logger.log('[Checkout] Direct navigation to Cart...');
     let cartNavigated = false;
@@ -1412,6 +1436,84 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
       let actionTaken = false;
 
       try {
+        // 0. CHECK FOR ERROR MODALS (Critical - must detect "try again later" etc.)
+        const errorDetected = await page.evaluate(() => {
+          const bodyText = document.body.innerText.toLowerCase();
+          const errorPatterns = [
+            'спробуйте пізніше', 'try again later', 'something went wrong',
+            'виникла помилка', 'error occurred', 'temporarily unavailable',
+            'тимчасово недоступно', 'service unavailable', 'сервіс недоступний',
+            'please try again', 'будь ласка, спробуйте', 'не вдалося',
+            'could not process', 'unable to process', 'неможливо обробити'
+          ];
+
+          for (const pattern of errorPatterns) {
+            if (bodyText.includes(pattern)) {
+              return pattern;
+            }
+          }
+
+          // Also check for error modals
+          const errorModal = document.querySelector('[class*="error"], [class*="alert"], [data-qa*="error"]');
+          if (errorModal && errorModal.innerText.trim().length > 0) {
+            const text = errorModal.innerText.toLowerCase();
+            // IGNORE EXTENDED DELIVERY WARNINGS (User Request)
+            if (text.includes('подовжені строки') || text.includes('extended delivery')) {
+              return null;
+            }
+            return errorModal.innerText.substring(0, 100);
+          }
+
+          return null;
+        });
+
+        if (errorDetected) {
+          logger.error(`🚨 [Checkout] ERROR DETECTED: "${errorDetected}"`);
+          sessionLogger.log('ERROR', {
+            context: 'CHECKOUT_ERROR_MODAL',
+            message: `Checkout error modal detected: ${errorDetected}`,
+            taskId
+          });
+
+          // Try to close OR ACCEPT the error modal
+          // For warnings like "Extended delivery", we must click "Accept" to proceed
+          const modalActionBtn = await page.$([
+            '[class*="modal"] button:has-text("Accept")',
+            '[class*="modal"] button:has-text("Confirm")',
+            '[class*="modal"] button:has-text("Continue")',
+            '[class*="modal"] button:has-text("Зрозуміло")',
+            '[class*="modal"] button:has-text("Гаразд")',
+            '[class*="modal"] button:has-text("Прийняти")',
+            '[class*="modal"] button:has-text("Так")',
+            '[class*="modal"] button:has-text("Yes")',
+            '[class*="modal"] button[class*="primary"]', // Often the "OK" button has a primary style
+            '[data-qa-id="close-modal"]',
+            'button[aria-label="Close"]',
+            '[class*="close"]'
+          ].join(', '));
+
+          if (modalActionBtn) {
+            console.log('[Checkout] Found modal action button. Clicking to accept/dismiss...');
+            await modalActionBtn.click().catch(() => { });
+            await delay(1500); // Wait bit longer for modal to disappear
+
+            // After accepting, we often need to click "Continue" AGAIN on the main page
+            // So we explicitly continue the loop to find the main button again
+            continue;
+          } else {
+            // Fallback: Try a generic JS click on the first button in the modal if strictly an error modal
+            const genericBtn = await page.$('[class*="modal"] button');
+            if (genericBtn) {
+              console.log('[Checkout] Clicking generic modal button...');
+              await genericBtn.click().catch(() => { });
+              await delay(1000);
+              continue;
+            }
+
+            throw new Error(`Checkout blocked by error: ${errorDetected}`);
+          }
+        }
+
         // 1. Check for Login Redirect (Critical Guard)
         if (await isLoginPage(page)) {
           throw new Error('Login Redirect during flow');
@@ -1719,7 +1821,10 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
               await client.sendPhoto(finalChatId, { source: path }).catch(() => { });
             }
 
-            await client.sendMessage(finalChatId, `🛍 Товар: <b>${productName}</b>\n🎨 Колір: <b>${selectedColor || '—'}</b> | 📏 Розмір: <b>${selectedSize || '—'}</b>\n\n✅ **ОЧІКУЄ ОПЛАТУ!** Підтвердіть у додатку банку.`, {
+            // Calculate duration for User
+            const durationSec = purchaseStartTime ? ((Date.now() - purchaseStartTime) / 1000).toFixed(2) : 'N/A';
+
+            await client.sendMessage(finalChatId, `🛍 Товар: <b>${productName}</b>\n🎨 Колір: <b>${selectedColor || '—'}</b> | 📏 Розмір: <b>${selectedSize || '—'}</b>\n⏱ Час викупу: <b>${durationSec} сек</b>\n\n✅ **ОЧІКУЄ ОПЛАТУ!** Підтвердіть у додатку банку.`, {
               parse_mode: 'HTML'
             }).catch(e => logger.error(`Telegram final notify error: ${e.message}`));
           }
@@ -1748,6 +1853,10 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
           logger.success(`[Checkout] ✅ Task marked as COMPLETED. Awaiting bank confirmation. ${durationMsg}`);
           console.log(`[Success] Всі скріншоти надіслано, викуп ініційовано для завдання ${taskId}. ${durationMsg}`);
 
+          // --- DEACTIVATE PROXY ROUTING AFTER CHECKOUT ---
+          exitCheckoutPhase();
+          logger.log('[Network] 🌐 Returning to Direct Connection...');
+
           sessionLogger.demote(taskId); // Stop forcing to positive AFTER success log
 
           return;
@@ -1774,6 +1883,8 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
       } catch (e) { logger.error(`Telegram notify error: ${e.message}`); }
     }
   } catch (error) {
+    // --- ENSURE PROXY ROUTING IS DEACTIVATED ON ERROR ---
+    exitCheckoutPhase();
     logger.error(`Checkout Flow Error: ${error.message}`);
     throw error;
   }

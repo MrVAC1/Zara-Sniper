@@ -14,6 +14,7 @@ export const MAIN_MENU_KEYBOARD = {
     [{ text: '➕ Додати' }, { text: '📊 Статус' }],
     [{ text: '📸 View' }, { text: '🖥 Screenshot' }],
     [{ text: '🗑 Видалити' }, { text: 'ℹ️ Info' }],
+    [{ text: '⏸ Pause All' }, { text: '▶️ Resume All' }],
     [{ text: '🛑 Стоп' }, { text: '🔄 Рестарт' }]
   ],
   resize_keyboard: true
@@ -90,10 +91,15 @@ export async function handleInfo(ctx) {
     `/tasks - Показати статус активних завдань\n` +
     `/view - Отримати скріншот (перегляд) завдання\n` +
     `/screenshot - Скріншот активної вкладки (Global)\n` +
+    `/login - Ручний вхід (email password)\n` +
+    `/restart - Меню рестарту бота\n` +
     `/delete - Меню видалення завдань\n` +
     `/info - Показати це повідомлення\n` +
     `/stop - Повна зупинка бота та браузера\n\n` +
-    `💡 *Підказка:* Надішліть посилання на товар Zara в будь-який момент, щоб почати відстеження.`;
+    `🔐 *Admin Commands:*\n` +
+    `/logs - Перегляд останніх логів\n` +
+    `/ua - Перевірка User-Agent` +
+    `\n\n💡 *Підказка:* Надішліть посилання на товар Zara в будь-який момент, щоб почати відстеження.`;
 
   try {
     if (ctx.callbackQuery) {
@@ -486,6 +492,86 @@ export async function handleResume(ctx, taskId) {
 }
 
 /**
+ * Глобальна пауза всіх завдань
+ */
+export async function handlePauseAll(ctx) {
+  const { isOwner } = await import('../utils/auth.js');
+  if (!isOwner(ctx.from.id)) {
+    return ctx.reply('⛔ Тільки власник може використовувати цю команду.');
+  }
+
+  try {
+    const tasks = await SniperTask.find({
+      botId: getBotId(),
+      status: { $in: ['hunting', 'processing', 'monitoring'] }
+    });
+
+    if (tasks.length === 0) {
+      return ctx.reply('📭 Немає активних завдань для паузи.');
+    }
+
+    let count = 0;
+    for (const task of tasks) {
+      try {
+        await stopAndCloseTask(task._id);
+        task.status = 'paused';
+        await task.save();
+        count++;
+      } catch (e) {
+        console.error(`Error pausing task ${task._id}: ${e.message}`);
+      }
+    }
+
+    await ctx.reply(`⏸ Призупинено ${count} завдань.\n\nДля поновлення натисніть ▶️ Resume All`, {
+      reply_markup: MAIN_MENU_KEYBOARD
+    });
+  } catch (e) {
+    console.error('[Telegram] PauseAll error:', e);
+    await ctx.reply('❌ Помилка: ' + e.message);
+  }
+}
+
+/**
+ * Глобальне поновлення всіх завдань
+ */
+export async function handleResumeAll(ctx, telegramBot) {
+  const { isOwner } = await import('../utils/auth.js');
+  if (!isOwner(ctx.from.id)) {
+    return ctx.reply('⛔ Тільки власник може використовувати цю команду.');
+  }
+
+  try {
+    const tasks = await SniperTask.find({
+      botId: getBotId(),
+      status: 'paused'
+    });
+
+    if (tasks.length === 0) {
+      return ctx.reply('📭 Немає призупинених завдань.');
+    }
+
+    let count = 0;
+    for (const task of tasks) {
+      try {
+        task.status = 'hunting';
+        await task.save();
+        startSniper(task._id.toString(), telegramBot || ctx.telegram).catch(console.error);
+        count++;
+      } catch (e) {
+        console.error(`Error resuming task ${task._id}: ${e.message}`);
+      }
+    }
+
+    await ctx.reply(`▶️ Поновлено ${count} завдань. Полювання активовано!`, {
+      reply_markup: MAIN_MENU_KEYBOARD
+    });
+  } catch (e) {
+    console.error('[Telegram] ResumeAll error:', e);
+    await ctx.reply('❌ Помилка: ' + e.message);
+  }
+}
+
+/**
  * Команда /delete з меню вибору
  */
 export async function handleDeleteMenu(ctx) {
@@ -671,7 +757,50 @@ export async function handleLogs(ctx) {
 
     await ctx.reply(message, { parse_mode: 'Markdown' });
   } catch (error) {
-    console.error('Logs command error:', error);
     ctx.reply('❌ Не вдалося отримати логи.');
+  }
+}
+
+/**
+ * Команда /ua - перевірка User Agent та Fingerprint
+ */
+export async function handleUACheck(ctx) {
+  const { isOwner } = await import('../utils/auth.js');
+  if (!isOwner(ctx.from.id)) {
+    return ctx.reply('⛔ Бот працює в Shared Mode. Команда доступна лише адміністратору.');
+  }
+
+  try {
+    const browser = await getBrowser();
+    if (!browser) return ctx.reply('❌ Браузер не ініціалізовано.');
+
+    await ctx.reply('🕵️‍♂️ Перевіряю User-Agent та цифровий відбиток...');
+    await ctx.replyWithChatAction('upload_photo');
+
+    const page = await browser.newPage();
+
+    // Check 1: WhatIsMyBrowser (Visual)
+    try {
+      await page.goto('https://www.whatismybrowser.com/detect/what-is-my-user-agent/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await new Promise(r => setTimeout(r, 2000)); // Wait for render
+      const screenshot = await page.screenshot({ type: 'jpeg', quality: 80, fullPage: false });
+
+      const uaInitial = await page.evaluate(() => navigator.userAgent);
+
+      await ctx.replyWithPhoto({ source: Buffer.from(screenshot) }, {
+        caption: `🕵️‍♂️ **Browser User-Agent**\n\n\`${uaInitial}\``,
+        parse_mode: 'Markdown'
+      });
+
+    } catch (e) {
+      console.error('[UA Check] Step 1 failed:', e.message);
+      await ctx.reply(`❌ Помилка завантаження сайту перевірки: ${e.message}`);
+    } finally {
+      if (!page.isClosed()) await page.close();
+    }
+
+  } catch (error) {
+    console.error('UA Check error:', error);
+    await ctx.reply(`❌ Помилка перевірки: ${error.message}`);
   }
 }

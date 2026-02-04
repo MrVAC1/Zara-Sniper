@@ -10,6 +10,7 @@ import { loadSession, saveSession, saveSessionData } from './session.js';
 import { reportError } from './logService.js';
 import { Semaphore } from '../utils/botUtils.js';
 import sessionLogger from './sessionLogger.js';
+import { attachNetworkRouter, setFingerprint } from './networkRouter.js';
 
 dotenv.config();
 
@@ -53,7 +54,10 @@ const LAUNCH_ARGS = [
   '--disable-site-isolation-trials',
   '--use-fake-ui-for-media-stream',
   '--ignore-certificate-errors',
-  '--disable-gpu'
+  '--disable-gpu',
+  '--enforce-webrtc-ip-permission-check',  // WebRTC IP leak protection
+  '--disable-webrtc-hw-encoding',
+  '--disable-webrtc-hw-decoding'
 ];
 
 const KEEPER_URL = 'https://www.zara.com/ua/uk/';
@@ -195,11 +199,13 @@ export async function initBrowser(userDataDir = USER_DATA_DIR) {
       storageState: sessionFilePath || undefined // Inject loaded session
     };
 
-    // Multi-Proxy Configuration
+    // --- FULL PROXY MODE ---
+    // Browser uses proxy for ALL requests (auth, browsing, checkout)
+    // This ensures consistent IP throughout the session to avoid Akamai suspicion
     const proxyConfig = proxyManager.getNextProxy();
 
     if (proxyConfig) {
-      console.log(`[Init] 🛡️ Using Proxy: ${proxyConfig.masked}`);
+      console.log(`[Init] 🛡️ FULL PROXY MODE: ${proxyConfig.masked}`);
       launchOptions.proxy = {
         server: proxyConfig.server,
         username: proxyConfig.username,
@@ -219,18 +225,22 @@ export async function initBrowser(userDataDir = USER_DATA_DIR) {
           password: bdPass
         };
       } else {
-        console.log(`[Init] ℹ️ No proxies configured. Using direct connection.`);
+        console.log(`[Init] ⚠️ No proxies configured. Using direct connection (NOT RECOMMENDED).`);
       }
     }
 
     // PERSISTENCE FIX: Do NOT wipe userDataDir. Playwright needs it.
-    // Only warn if we are injecting over an existing profile
     if (sessionFilePath && fs.existsSync(userDataDir)) {
       console.log('[Session] ℹ️ Injecting DB session into existing persistent profile...');
     }
 
     console.group('[Browser Init]');
-    console.log(`[Network] Browser: Direct Connection (Host IP)`);
+    if (launchOptions.proxy) {
+      console.log(`[Network] Browser: FULL PROXY MODE (all requests)`);
+      console.log(`[Network] Proxy: ${proxyConfig?.masked || 'Bright Data Legacy'}`);
+    } else {
+      console.log(`[Network] Browser: Direct Connection (Host IP)`);
+    }
 
     // Force IPv4 if not already set globally (Safety net for container)
     try {
@@ -470,6 +480,12 @@ export async function initBrowser(userDataDir = USER_DATA_DIR) {
     // Apply Additional Stealth Scripts (Optional / Supplementary)
     await applyStealthScripts(globalContext);
 
+    // --- NETWORK ROUTER INTEGRATION ---
+    // Attach context-aware routing for checkout proxy
+    setFingerprint(fingerprint);
+    await attachNetworkRouter(globalContext, fingerprint);
+    console.log('[Stealth] Network router attached for checkout proxy routing.');
+
     // --- GHOST PAGE CLEANER ---
     globalContext.on('page', async (page) => {
       try {
@@ -480,7 +496,38 @@ export async function initBrowser(userDataDir = USER_DATA_DIR) {
         if (url === 'about:blank' || url === 'data:,') {
           console.log('[Cleaner] Closed empty tab (about:blank) to save resources.');
           await page.close().catch(() => { });
+          return;
         }
+
+        // --- STAY-IN-STORE BUTTON WATCHER ---
+        // Continuously monitor for the "stay in store" modal and click it
+        const stayInStoreWatcher = setInterval(async () => {
+          try {
+            if (page.isClosed()) {
+              clearInterval(stayInStoreWatcher);
+              return;
+            }
+
+            const stayBtn = await page.$('[data-qa-action="stay-in-store"]');
+            if (stayBtn && await stayBtn.isVisible()) {
+              console.log('[Browser] 📍 "Stay in Store" modal detected, clicking...');
+              await stayBtn.click().catch(() => { });
+              await new Promise(r => setTimeout(r, 500));
+            }
+          } catch (e) {
+            // Page closed or other error - stop watching
+            if (e.message.includes('closed') || e.message.includes('Target')) {
+              clearInterval(stayInStoreWatcher);
+            }
+          }
+        }, 2000); // Check every 2 seconds
+
+        // Stop watcher when page closes
+        page.on('close', () => {
+          clearInterval(stayInStoreWatcher);
+        });
+        // ------------------------------------
+
       } catch (e) { }
     });
     // ---------------------------
@@ -581,18 +628,15 @@ export function startAutoCleanup(context, activePages) {
           }
 
           if (!isAssociated && isBlank) {
-            // Additional Check: Is it the Keeper Tab?
-            // If the URL matches KEEPER_URL, DO NOT CLOSE.
-            if (url.includes('zara.com') && !url.includes('cart') && !url.includes('search')) {
-              // Heuristic: If it looks like a main page, treat as keeper candidate
-              // Better: check exact KEEPER_URL or part of it
-              if (url.includes('zara.com/ua/uk')) {
-                // console.log('[Cleaner] Skipping Keeper Tab.');
-                continue;
-              }
+            // CRITICAL FIX: DO NOT close tabs that might be loading/redirecting to Zara
+            // Only close if it's strictly 'about:blank' or 'data:,' AND has no title/content
+
+            // Explicitly SKIP any zara tab
+            if (url.includes('zara.com')) {
+              continue;
             }
 
-            console.log(`[Cleaner] Closing inactive tab: ${url || 'empty'}`);
+            console.log(`[Cleaner] Closing blank/empty tab to save resources: ${url || 'about:blank'}`);
             await page.close().catch(() => { });
           }
         } catch (e) { }
@@ -606,6 +650,7 @@ export function startAutoCleanup(context, activePages) {
 /**
  * Attach Global Akamai 403 Detector to Page
  * Logs all Akamai blocks regardless of context (login, checkout, hunting)
+ * AUTO-RESTART: Closes browser and restarts with new proxy on block
  */
 export function attachAkamaiDetector(page, context = 'Unknown') {
   page.on('response', async (response) => {
@@ -613,7 +658,7 @@ export function attachAkamaiDetector(page, context = 'Unknown') {
       const status = response.status();
       const url = response.url();
 
-      if ((status === 403 || status === 429) && url.includes('zara.com')) {
+      if ((status === 403 || status === 429 || status === 502) && url.includes('zara.com')) {
         console.error(`[Akamai Global] 🛡️ BLOCK DETECTED! Status: ${status}, Context: ${context}, URL: ${url}`);
 
         // Log to negative file
@@ -632,7 +677,7 @@ export function attachAkamaiDetector(page, context = 'Unknown') {
           }
         } catch (e) { }
 
-        // AUTO-ROTATION: Switch proxy on block
+        // AUTO-ROTATION: Switch proxy on block and restart browser
         if (process.env.PROXY_ROTATION_ON_BLOCK === 'true') {
           const currentProxy = proxyManager.getCurrentProxy();
 
@@ -644,9 +689,34 @@ export function attachAkamaiDetector(page, context = 'Unknown') {
             const nextProxy = proxyManager.getNextProxy();
             if (nextProxy) {
               console.log(`[Akamai] ✅ Next proxy selected: ${nextProxy.masked}`);
-              console.log(`[Akamai] ⚠️ Browser restart required for proxy change. Please restart bot.`);
-              // Note: Full browser restart needed to change proxy
-              // User can manually restart or we implement auto-restart
+              console.log(`[Akamai] 🔄 AUTO-RESTARTING browser with new proxy...`);
+
+              // Set flag to prevent multiple restarts
+              if (!globalContext._isRestarting) {
+                globalContext._isRestarting = true;
+
+                // Close browser and reinitialize with new proxy
+                try {
+                  // Close all pages first
+                  const pages = globalContext.pages();
+                  for (const p of pages) {
+                    await p.close().catch(() => { });
+                  }
+
+                  // Close browser context
+                  await globalContext.close().catch(() => { });
+                  globalContext = null;
+
+                  console.log(`[Akamai] 🔄 Browser closed. Reinitializing with new proxy...`);
+
+                  // Reinitialize browser (will pick up the new proxy from proxyManager)
+                  // The initBrowser function will be called by the watchdog or task system
+                  // We set globalContext to null to trigger reinitialization
+                } catch (restartErr) {
+                  console.error(`[Akamai] ❌ Browser restart failed: ${restartErr.message}`);
+                  globalContext = null;
+                }
+              }
             } else {
               console.error(`[Akamai] ❌ No healthy proxies available. Continuing with direct connection.`);
             }
@@ -668,13 +738,9 @@ export async function createTaskPage(taskId) {
 
   const page = await context.newPage();
 
-  // Randomized Viewport (per page)
-  const viewportWidth = 1920 + Math.floor(Math.random() * 100 - 50);
-  const viewportHeight = 1080 + Math.floor(Math.random() * 100 - 50);
-  await page.setViewportSize({
-    width: viewportWidth,
-    height: viewportHeight
-  });
+  // Standard Viewport (Match Device)
+  // Removed randomization to keep standard resolution as requested
+  // await page.setViewportSize({ width: 1920, height: 1080 }); // Optional: Force standard FHD if needed, but 'null' in context is better
 
   // Enhanced Headers (Modern Chrome)
   await page.setExtraHTTPHeaders({
@@ -988,18 +1054,53 @@ async function applyStealthScripts(context) {
       if (parameter === 37445) {
         return 'Google Inc. (NVIDIA)';
       }
-      // Spoof Renderer (Akamai Check)
+      // Spoof Renderer (Akamai Check) - Updated to GTX 1660 Ti
       if (parameter === 37446) {
-        return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 Direct3D11 vs_5_0 ps_5_0)';
+        return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1660 Ti Direct3D11 vs_5_0 ps_5_0)';
       }
       return getParameter.apply(this, arguments);
     };
 
-    // Mask Hardware
-    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 }); // Mimic 8-core CPU
-    Object.defineProperty(navigator, 'deviceMemory', { get: () => 16 }); // Mimic 16GB RAM
-    Object.defineProperty(navigator, 'platform', { get: () => 'Win32' }); // Mimic Windows Platform
+    // Mask Hardware - Windows Desktop Identity
+    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 }); // 8-core CPU
+    Object.defineProperty(navigator, 'deviceMemory', { get: () => 16 }); // 16GB RAM
+    Object.defineProperty(navigator, 'platform', { get: () => 'Win32' }); // Windows Platform (MANDATORY)
     // ---------------------------------------------------------
+
+    // --- LAYER 3: WebRTC IP Leak Prevention ---
+    // Prevents real IP from leaking through WebRTC during proxy checkout phase
+    const originalRTCPeerConnection = window.RTCPeerConnection;
+    window.RTCPeerConnection = function (...args) {
+      const config = args[0] || {};
+
+      // Force ICE servers to be empty to prevent STUN/TURN IP discovery
+      config.iceServers = [];
+
+      // Create the connection with modified config
+      const pc = new originalRTCPeerConnection(config);
+
+      // Override createOffer to suppress ICE candidates
+      const originalCreateOffer = pc.createOffer.bind(pc);
+      pc.createOffer = async function (options) {
+        const offer = await originalCreateOffer(options);
+        // Remove candidate lines that may contain IP addresses
+        if (offer && offer.sdp) {
+          offer.sdp = offer.sdp.replace(/a=candidate:.+\r\n/g, '');
+        }
+        return offer;
+      };
+
+      return pc;
+    };
+
+    // Copy static properties
+    if (originalRTCPeerConnection) {
+      window.RTCPeerConnection.prototype = originalRTCPeerConnection.prototype;
+      Object.keys(originalRTCPeerConnection).forEach(key => {
+        window.RTCPeerConnection[key] = originalRTCPeerConnection[key];
+      });
+    }
+    // -----------------------------------------
   });
 }
 
