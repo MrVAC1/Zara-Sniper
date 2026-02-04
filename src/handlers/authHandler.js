@@ -1,5 +1,5 @@
 
-import { getContext } from '../services/browser.js';
+import { getContext, attachAkamaiDetector } from '../services/browser.js';
 import { saveSession } from '../services/session.js';
 import { reportError } from '../services/logService.js';
 import User from '../models/User.js';
@@ -19,7 +19,30 @@ export async function handleLogin(ctx) {
   const email = parts[1].trim();
   const password = parts.slice(2).join(' ').trim(); // Password might contain spaces
 
-  await ctx.reply('🔐 Починаю процес входу...\nЦе займе близько 30-45 секунд. Будь ласка, зачекайте.');
+  // Save credentials to DB IMMEDIATELY (before login attempt)
+  try {
+    const { encrypt } = await import('../utils/crypto.js');
+
+    const encryptedEmail = encrypt(email);
+    const encryptedPassword = encrypt(password);
+
+    await User.findOneAndUpdate(
+      { telegramId: userId },
+      {
+        $set: {
+          'zaraCredentials.email': encryptedEmail,
+          'zaraCredentials.password': encryptedPassword
+        }
+      },
+      { upsert: true }
+    );
+
+    console.log('[Login] ✅ Credentials encrypted and saved to DB.');
+  } catch (cryptoErr) {
+    console.warn('[Login] ⚠️ Failed to save credentials:', cryptoErr.message);
+  }
+
+  await ctx.reply('🔐 Початок процесу входу...\nЦе займе близько 30-45 секунд. Будь ласка, зачекайте.');
 
   let page = null;
   try {
@@ -30,6 +53,9 @@ export async function handleLogin(ctx) {
     }
 
     page = await context.newPage();
+
+    // Attach Akamai detector for login flow
+    attachAkamaiDetector(page, 'Manual Login');
 
     // 1. Navigate to Login Page
     await ctx.reply('🔄 Переходжу на сторінку входу...');
@@ -94,7 +120,7 @@ export async function handleLogin(ctx) {
 
     // Final Screenshot
     const finalShot = await page.screenshot({ type: 'jpeg', quality: 70 });
-    await ctx.replyWithPhoto({ source: finalShot }, { caption: '✅ Вхід виконано (сподіваюсь). Сесію збережено.' });
+    await ctx.replyWithPhoto({ source: finalShot }, { caption: '✅ Вхід виконано. Сесію збережено.' });
 
     await page.close();
 

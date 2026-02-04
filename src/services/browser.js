@@ -191,18 +191,36 @@ export async function initBrowser(userDataDir = USER_DATA_DIR) {
       timezoneId: 'Europe/Kyiv',
       channel: undefined,
       executablePath: undefined,
-      proxy: (process.env.BRIGHTDATA_USER && process.env.BRIGHTDATA_PASSWORD) ? {
-        server: process.env.BRIGHTDATA_PROXY_URL || 'http://brd.superproxy.io:33335',
-        username: process.env.BRIGHTDATA_USER,
-        password: process.env.BRIGHTDATA_PASSWORD
-      } : undefined,
+      proxy: undefined,  // Will be set below based on proxyManager
       storageState: sessionFilePath || undefined // Inject loaded session
     };
 
-    if (launchOptions.proxy) {
-      console.log(`[Init] 🛡️ Configuring Bright Data Proxy: ${launchOptions.proxy.server}`);
+    // Multi-Proxy Configuration
+    const proxyConfig = proxyManager.getNextProxy();
+
+    if (proxyConfig) {
+      console.log(`[Init] 🛡️ Using Proxy: ${proxyConfig.masked}`);
+      launchOptions.proxy = {
+        server: proxyConfig.server,
+        username: proxyConfig.username,
+        password: proxyConfig.password
+      };
     } else {
-      console.log(`[Init] ⚠️ No Bright Data credentials found. Running Direct/Host connection.`);
+      // Fallback: Check legacy Bright Data ENV vars
+      const bdUser = process.env.BRIGHTDATA_USER;
+      const bdPass = process.env.BRIGHTDATA_PASSWORD;
+
+      if (bdUser && bdPass) {
+        const bdServer = process.env.BRIGHTDATA_PROXY_URL || 'http://brd.superproxy.io:33335';
+        console.log(`[Init] 🛡️ Using legacy Bright Data: ${bdServer}`);
+        launchOptions.proxy = {
+          server: bdServer,
+          username: bdUser,
+          password: bdPass
+        };
+      } else {
+        console.log(`[Init] ℹ️ No proxies configured. Using direct connection.`);
+      }
     }
 
     // PERSISTENCE FIX: Do NOT wipe userDataDir. Playwright needs it.
@@ -406,6 +424,47 @@ export async function initBrowser(userDataDir = USER_DATA_DIR) {
         throw fpError; // Re-throw to trigger cleanup in catch block
       }
     }
+
+    // --- CANVAS NOISE INJECTION (Anti-Fingerprinting) ---
+    console.log('[Stealth] Injecting canvas noise...');
+    await globalContext.addInitScript(() => {
+      const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+      const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+
+      HTMLCanvasElement.prototype.toDataURL = function (...args) {
+        const ctx = this.getContext('2d');
+        if (ctx) {
+          const imageData = ctx.getImageData(0, 0, this.width, this.height);
+          // Add tiny noise to prevent fingerprinting
+          for (let i = 0; i < imageData.data.length; i += 4) {
+            imageData.data[i] += Math.random() * 2 - 1;     // R
+            imageData.data[i + 1] += Math.random() * 2 - 1; // G
+            imageData.data[i + 2] += Math.random() * 2 - 1; // B
+          }
+          ctx.putImageData(imageData, 0, 0);
+        }
+        return originalToDataURL.apply(this, args);
+      };
+
+      // Also add noise to getImageData for WebGL fingerprinting
+      CanvasRenderingContext2D.prototype.getImageData = function (...args) {
+        const imageData = originalGetImageData.apply(this, args);
+        for (let i = 0; i < imageData.data.length; i += 10) {
+          imageData.data[i] += Math.random() * 2 - 1;
+        }
+        return imageData;
+      };
+    });
+
+    // --- PERMISSION GRANTS (Appear More Human) ---
+    try {
+      await globalContext.grantPermissions(['notifications', 'geolocation'], {
+        origin: 'https://www.zara.com'
+      });
+      console.log('[Stealth] Permissions granted for Zara domain.');
+    } catch (permErr) {
+      console.warn(`[Stealth] Permission grant failed: ${permErr.message}`);
+    }
     // ------------------------------------
 
     // Apply Additional Stealth Scripts (Optional / Supplementary)
@@ -545,6 +604,62 @@ export function startAutoCleanup(context, activePages) {
 }
 
 /**
+ * Attach Global Akamai 403 Detector to Page
+ * Logs all Akamai blocks regardless of context (login, checkout, hunting)
+ */
+export function attachAkamaiDetector(page, context = 'Unknown') {
+  page.on('response', async (response) => {
+    try {
+      const status = response.status();
+      const url = response.url();
+
+      if ((status === 403 || status === 429) && url.includes('zara.com')) {
+        console.error(`[Akamai Global] 🛡️ BLOCK DETECTED! Status: ${status}, Context: ${context}, URL: ${url}`);
+
+        // Log to negative file
+        sessionLogger.log('ERROR', {
+          context: 'AKAMAI_GLOBAL_BLOCK',
+          blockContext: context,
+          status,
+          url,
+          message: `Akamai ${status} block detected in ${context}. URL: ${url}`
+        });
+
+        // Take screenshot if possible
+        try {
+          if (!page.isClosed()) {
+            await page.screenshot({ type: 'png' }).catch(() => { });
+          }
+        } catch (e) { }
+
+        // AUTO-ROTATION: Switch proxy on block
+        if (process.env.PROXY_ROTATION_ON_BLOCK === 'true') {
+          const currentProxy = proxyManager.getCurrentProxy();
+
+          if (currentProxy) {
+            console.error(`[Akamai] 🔄 Rotating proxy due to ${status} block...`);
+            proxyManager.markProxyBlocked(currentProxy.url);
+
+            // Get next proxy
+            const nextProxy = proxyManager.getNextProxy();
+            if (nextProxy) {
+              console.log(`[Akamai] ✅ Next proxy selected: ${nextProxy.masked}`);
+              console.log(`[Akamai] ⚠️ Browser restart required for proxy change. Please restart bot.`);
+              // Note: Full browser restart needed to change proxy
+              // User can manually restart or we implement auto-restart
+            } else {
+              console.error(`[Akamai] ❌ No healthy proxies available. Continuing with direct connection.`);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[Akamai Detector] Error: ${e.message}`);
+    }
+  });
+}
+
+/**
  * Create Task Page
  */
 export async function createTaskPage(taskId) {
@@ -553,9 +668,28 @@ export async function createTaskPage(taskId) {
 
   const page = await context.newPage();
 
-  await page.setExtraHTTPHeaders({
-    'Accept-Language': 'uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7'
+  // Randomized Viewport (per page)
+  const viewportWidth = 1920 + Math.floor(Math.random() * 100 - 50);
+  const viewportHeight = 1080 + Math.floor(Math.random() * 100 - 50);
+  await page.setViewportSize({
+    width: viewportWidth,
+    height: viewportHeight
   });
+
+  // Enhanced Headers (Modern Chrome)
+  await page.setExtraHTTPHeaders({
+    'Accept-Language': 'uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7',
+    'sec-ch-ua': '"Chromium";v="121", "Not A Brand";v="99"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+    'sec-fetch-dest': 'document',
+    'sec-fetch-mode': 'navigate',
+    'sec-fetch-site': 'none',
+    'upgrade-insecure-requests': '1'
+  });
+
+  // Attach global Akamai detector
+  attachAkamaiDetector(page, `Task:${taskId}`);
 
   return page;
 }

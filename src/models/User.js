@@ -27,6 +27,18 @@ const userSchema = new mongoose.Schema({
     cookies: [Object],
     localStorage: Object
   },
+  zaraCredentials: {
+    email: {
+      encrypted: String,
+      iv: String,
+      authTag: String
+    },
+    password: {
+      encrypted: String,
+      iv: String,
+      authTag: String
+    }
+  },
   createdAt: {
     type: Date,
     default: Date.now

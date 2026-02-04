@@ -132,6 +132,11 @@ async function humanClick(page, selector) {
     const box = await element.boundingBox();
     if (!box) return false;
 
+    // Start from a random nearby position (realistic approach)
+    const startX = box.x + Math.random() * 200 - 100;
+    const startY = box.y + Math.random() * 200 - 100;
+    await page.mouse.move(startX, startY);
+
     // Move to center with some randomness
     const x = box.x + box.width / 2 + randomDelay(-10, 10);
     const y = box.y + box.height / 2 + randomDelay(-10, 10);
@@ -365,6 +370,95 @@ export function startGlobalWatchdog(telegramBot) {
         }
         // --- END SESSION MONITORING ---
 
+        // --- LOGIN STATUS VERIFICATION (Header Check) ---
+        const LOGIN_CHECK_INTERVAL = 180000; // 3 minutes
+        if (!watchdogInterval.lastLoginCheck) watchdogInterval.lastLoginCheck = 0;
+
+        if (Date.now() - watchdogInterval.lastLoginCheck > LOGIN_CHECK_INTERVAL) {
+          try {
+            const context = await getBrowser();
+            if (context) {
+              const pages = context.pages();
+              let loggedOut = false;
+
+              for (const page of pages) {
+                if (!page || page.isClosed()) continue;
+
+                // Check for login button (user is logged OUT)
+                const loginButton = await page.$('[data-qa-id="layout-header-user-logon"]').catch(() => null);
+
+                if (loginButton) {
+                  loggedOut = true;
+                  console.error('[Watchdog] 🚨 LOGOUT DETECTED! Starting auto-recovery...');
+
+                  sessionLogger.log('ERROR', {
+                    context: 'AUTH_LOST_DURING_HUNTING',
+                    message: `Logout detected. ${huntingTasksCount} tasks. Starting recovery...`
+                  });
+
+                  // Attempt automatic recovery
+                  const recovered = await attemptAutoRecovery(telegramBot);
+
+                  if (recovered) {
+                    console.log('[Watchdog] ✅ AUTO-RECOVERY SUCCESS!');
+                    await SniperTask.updateMany(
+                      { botId: getBotId(), status: 'paused' },
+                      { $set: { status: 'hunting' } }
+                    );
+                    const ownerIdEnv = process.env.OWNER_ID;
+                    const firstOwner = ownerIdEnv ? ownerIdEnv.split(',')[0].trim() : null;
+                    if (telegramBot && firstOwner) {
+                      await telegramBot.telegram.sendMessage(firstOwner, '✅ *Сесію відновлено!*', { parse_mode: 'Markdown' }).catch(() => { });
+                    }
+                    break;
+                  }
+
+                  // If recovery failed, continue with pause logic below
+                  console.error('[Watchdog] ❌ Recovery failed. Pausing tasks...');
+
+                  // Pause all active tasks
+                  await SniperTask.updateMany(
+                    {
+                      botId: getBotId(),
+                      status: { $in: ['hunting', 'HUNTING', 'processing', 'at_checkout'] }
+                    },
+                    { $set: { status: 'paused' } }
+                  );
+
+                  // Send Telegram alert
+                  if (telegramBot) {
+                    const ownerIdEnv = process.env.OWNER_ID;
+                    const firstOwner = ownerIdEnv ? ownerIdEnv.split(',')[0].trim() : null;
+
+                    if (firstOwner) {
+                      await telegramBot.telegram.sendMessage(
+                        firstOwner,
+                        '🚨 *Сесію втрачено під час полювання!*\n\nВиявлено кнопку входу в хедері.\nВсі завдання призупинено.\n\nВикористайте `/login` для відновлення.',
+                        { parse_mode: 'Markdown' }
+                      ).catch(() => { });
+                    }
+                  }
+
+                  break;
+                }
+              }
+
+              if (!loggedOut) {
+                // Verify account button is present (optional, for confidence)
+                const accountButton = await pages[0]?.$('[data-qa-id="layout-header-user-account"]').catch(() => null);
+                if (accountButton) {
+                  console.log('[Watchdog] ✅ LOGIN STATUS: User is logged in (account button present).');
+                }
+              }
+            }
+
+            watchdogInterval.lastLoginCheck = Date.now();
+          } catch (loginCheckErr) {
+            console.warn(`[Watchdog] Login status check failed: ${loginCheckErr.message}`);
+          }
+        }
+        // --- END LOGIN STATUS VERIFICATION ---
+
         const inactiveTime = Date.now() - lastGlobalActivity;
 
         if (inactiveTime > THRESHOLD_MS) {
@@ -396,6 +490,127 @@ export function startGlobalWatchdog(telegramBot) {
       console.error(`[Watchdog] Error in loop: ${err.message}`);
     }
   }, CHECK_INTERVAL_MS);
+}
+
+/**
+ * Perform automatic login using stored credentials
+ */
+async function performAutoLogin(email, password, telegramBot) {
+  const context = await getBrowser();
+  const page = await context.newPage();
+
+  try {
+    console.log('[Auto-Login] Navigating to login page...');
+    await page.goto('https://www.zara.com/ua/uk/logon', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await delay(3000);
+
+    // Email step
+    const emailInput = await page.waitForSelector('[data-qa-input-qualifier="logonId"]', { visible: true, timeout: 15000 }).catch(() => null);
+    if (!emailInput) throw new Error('Email input not found');
+
+    await emailInput.type(email, { delay: 80 });
+    await delay(randomDelay(500, 1000));
+    await page.click('[data-qa-id="logon-form-submit"]');
+    await delay(3000);
+
+    // Password step
+    const passwordInput = await page.waitForSelector('[data-qa-input-qualifier="password"]', { visible: true, timeout: 15000 }).catch(() => null);
+    if (!passwordInput) throw new Error('Password input not found');
+
+    await passwordInput.type(password, { delay: 80 });
+    await delay(randomDelay(500, 1000));
+    await page.click('[data-qa-id="logon-form-submit"]');
+
+    await page.waitForNavigation({ timeout: 15000 }).catch(() => { });
+    await delay(5000);
+
+    // Save session
+    const { saveSession } = await import('./session.js');
+    await saveSession(context);
+
+    console.log('[Auto-Login] ✅ Login successful! Session saved.');
+    await page.close();
+
+    return true;
+  } catch (e) {
+    console.error(`[Auto-Login] Failed: ${e.message}`);
+    if (page && !page.isClosed()) await page.close().catch(() => { });
+    return false;
+  }
+}
+
+/**
+ * Attempt automatic recovery from logout
+ * Step 1: Browser profile restore
+ * Step 2: Auto-login with stored credentials
+ */
+async function attemptAutoRecovery(telegramBot) {
+  console.log('[Recovery] 🔄 Starting automatic recovery sequence...');
+
+  // Step 1: Try browser profile restore
+  try {
+    console.log('[Recovery] Step 1/2: Restoring from browser profile...');
+    await handleSessionLoss(telegramBot, 0);
+
+    // Verify it worked by checking for account button
+    const context = await getBrowser();
+    const pages = context.pages();
+
+    for (const page of pages) {
+      if (!page || page.isClosed()) continue;
+      const accountButton = await page.$('[data-qa-id="layout-header-user-account"]').catch(() => null);
+
+      if (accountButton) {
+        console.log('[Recovery] ✅ Step 1/2 SUCCESS: Profile restore worked!');
+        return true;
+      }
+    }
+
+    console.log('[Recovery] Step 1/2: Profile restore didn\'t work. Trying credentials...');
+  } catch (e) {
+    console.warn(`[Recovery] Step 1/2 failed: ${e.message}`);
+  }
+
+  // Step 2: Try auto-login with stored credentials
+  try {
+    console.log('[Recovery] Step 2/2: Auto-login using stored credentials...');
+
+    const owner = await User.findOne({ isOwner: true });
+    if (!owner?.zaraCredentials?.email?.encrypted) {
+      console.error('[Recovery] ❌ No stored credentials found in database!');
+      return false;
+    }
+
+    // Decrypt credentials
+    const { decrypt } = await import('../utils/crypto.js');
+    const email = decrypt(owner.zaraCredentials.email);
+    const password = decrypt(owner.zaraCredentials.password);
+
+    console.log('[Recovery] Credentials decrypted. Attempting login...');
+    const success = await performAutoLogin(email, password, telegramBot);
+
+    if (success) {
+      console.log('[Recovery] ✅ Step 2/2 SUCCESS: Auto-login worked!');
+
+      sessionLogger.log('INFO', {
+        context: 'AUTO_RECOVERY_SUCCESS',
+        message: 'Session automatically recovered using stored credentials.'
+      });
+
+      return true;
+    }
+
+    console.error('[Recovery] ❌ Step 2/2 FAILED: Auto-login unsuccessful.');
+  } catch (e) {
+    console.error(`[Recovery] Step 2/2 error: ${e.message}`);
+    sessionLogger.log('ERROR', {
+      context: 'AUTO_RECOVERY_FAILED',
+      message: `Auto-recovery failed: ${e.message}`
+    });
+  }
+
+  console.error('[Recovery] ❌ ALL RECOVERY ATTEMPTS FAILED!');
+  return false;
 }
 
 /**
