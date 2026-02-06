@@ -12,7 +12,7 @@ import { triggerIpGuard, isSystemPaused } from './healthGuard.js';
 import { parseProductOptions } from './zaraParser.js';
 import { reportError } from './logService.js';
 import { getBotId, Semaphore } from '../utils/botUtils.js';
-import sessionLogger from './sessionLogger.js';
+import { sessionLogger } from './sessionLogger.js';
 import { enterCheckoutPhase, exitCheckoutPhase } from './networkRouter.js';
 
 // Global Semaphore for serializing API checks Cross-Task
@@ -61,7 +61,7 @@ function releaseCheckoutLock() {
   }
 }
 
-import { getTimeConfig, getJitteredDelay, getSniperInterval, randomDelay } from '../utils/timeUtils.js';
+import { getTimeConfig, getJitteredDelay, getSniperInterval, randomDelay, getDynamicWait } from '../utils/timeUtils.js';
 import { proxyManager } from './proxyManager.js';
 
 // --- CONSTANTS ---
@@ -127,57 +127,93 @@ async function isLoginPage(page) {
 
 async function humanClick(page, selector) {
   try {
-    const element = await page.$(selector);
-    if (!element) return false;
-
+    const element = await page.waitForSelector(selector, { state: 'visible', timeout: 5000 });
     const box = await element.boundingBox();
     if (!box) return false;
 
-    // Start from a random nearby position (realistic approach)
-    const startX = box.x + Math.random() * 200 - 100;
-    const startY = box.y + Math.random() * 200 - 100;
-    await page.mouse.move(startX, startY);
+    // 1. Move to element with non-linear path (Bezier-like)
+    // We simulate a curve by moving to a random control point first
+    const start = await page.mouse._client?.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 }).catch(() => ({ x: 0, y: 0 })); // Mock start if unknown
 
-    // Move to center with some randomness
-    const x = box.x + box.width / 2 + randomDelay(-10, 10);
-    const y = box.y + box.height / 2 + randomDelay(-10, 10);
+    // Target with randomness
+    const targetX = box.x + box.width / 2 + randomDelay(-10, 10);
+    const targetY = box.y + box.height / 2 + randomDelay(-10, 10);
 
-    // Curve movement (simulated by steps)
-    await page.mouse.move(x, y, { steps: randomDelay(5, 15) });
+    // Simple 2-step movement to mimic curve
+    const controlX = (start.x || 0 + targetX) / 2 + randomDelay(-50, 50);
+    const controlY = (start.y || 0 + targetY) / 2 + randomDelay(-50, 50);
 
-    // Hover (User requested usage of MIN_DELAY / MAX_DELAY)
-    await new Promise(r => setTimeout(r, randomDelay(MIN_DELAY, MAX_DELAY)));
+    await page.mouse.move(controlX, controlY, { steps: randomDelay(5, 10) });
+    await page.mouse.move(targetX, targetY, { steps: randomDelay(5, 10) });
 
-    // Click with delay
+    // 2. Micro-pause (Hover effect)
+    await delay(randomDelay(MIN_DELAY, MAX_DELAY));
+
+    // 3. Click with hold duration
     await page.mouse.down();
-    await new Promise(r => setTimeout(r, getClickDelay()));
+    await delay(randomDelay(50, 150)); // Hold click
     await page.mouse.up();
+
+    // 4. Post-click dynamic wait (Processing time)
+    await delay(getDynamicWait(200));
 
     return true;
   } catch (e) {
-    console.warn(`[Stealth] Click failed for ${selector}: ${e.message}`);
-    // Fallback to standard click
-    try { await page.click(selector); return true; } catch (e2) { return false; }
+    return false;
   }
 }
 
 
 async function typeWithJitter(page, selector, text) {
-  try {
-    // Humanization: Delay before starting to type (Thinking time)
-    await new Promise(r => setTimeout(r, randomDelay(2000, 4000)));
+  // Humanization: variable reaction time
+  await delay(getDynamicWait(1000));
 
-    await page.focus(selector);
-    for (const char of text) {
-      await page.keyboard.type(char);
-      // Humanization: Slower typing speed (100-150ms per key)
-      await new Promise(r => setTimeout(r, randomDelay(100, 150)));
+  await page.focus(selector);
+
+  for (const char of text) {
+    await page.keyboard.type(char);
+    // Micro-tremor: typed keys have different intervals
+    // Fast burst vs slow think
+    const isBurst = Math.random() > 0.8;
+    const interval = isBurst ? randomDelay(30, 70) : randomDelay(100, 250);
+    await delay(interval);
+  }
+
+  // Post-typing verification pause
+  await delay(getDynamicWait(500));
+}
+
+/**
+ * IMPOSSIBLE TRAVEL CHECK
+ * Prevents session reuse across different regions to protect Akamai tokens.
+ */
+async function checkImpossibleTravel(page, taskUrl, logger) {
+  try {
+    let targetStoreId = 11767; // Default UA
+    if (taskUrl.includes('/es/')) targetStoreId = 10701;
+    else if (taskUrl.includes('/pl/')) targetStoreId = 10659;
+    else if (taskUrl.includes('/de/')) targetStoreId = 10500;
+
+    const cookies = await page.context().cookies();
+
+    // Check 'storeId' or 'ipl' (often holds store info) or 'geo'
+    // Common Zara cookie for store is just 'storeId'
+    const storeCookie = cookies.find(c => c.name === 'storeId');
+
+    if (storeCookie) {
+      const currentStoreId = parseInt(storeCookie.value);
+      // Rough check: If defined and mismatches significantly
+      if (currentStoreId && currentStoreId !== targetStoreId) {
+        logger.warn(`[Impossible Travel] 🛑 DETECTED! Session StoreID (${currentStoreId}) != Task Target (${targetStoreId}).`);
+        logger.warn(`[Impossible Travel] Terminating session to prevent Akamai ban.`);
+        throw new Error('IMPOSSIBLE_TRAVEL_DETECTED');
+      }
     }
-    // Humanization: Delay after typing
-    await new Promise(r => setTimeout(r, randomDelay(500, 1000)));
+
+    // Optional: Check 'source' region if encoded in other cookies
   } catch (e) {
-    console.warn(`[Stealth] Typing failed for ${selector}: ${e.message}`);
-    await page.fill(selector, text);
+    if (e.message === 'IMPOSSIBLE_TRAVEL_DETECTED') throw e;
+    // Ignore read errors
   }
 }
 
@@ -544,11 +580,8 @@ async function performAutoLogin(email, password, telegramBot) {
     await page.waitForNavigation({ timeout: 15000 }).catch(() => { });
     await delay(5000);
 
-    // Save session
-    const { saveSession } = await import('./session.js');
-    await saveSession(context);
-
-    console.log('[Auto-Login] ✅ Login successful! Session saved.');
+    // Save session (Read-Only Mode: Write Disabled)
+    console.log('[Auto-Login] ✅ Login successful! (Session write skipped in Read-Only mode)');
     await page.close();
 
     return true;
@@ -1903,13 +1936,8 @@ async function sniperLoop(task, telegramBot, logger) {
     if (!browserContext) {
       logger.warn('[Sniper] Browser context missing. Attempting auto-recovery...');
       try {
-        const ownerIdFull = process.env.OWNER_ID || 'default';
-        const primaryOwner = ownerIdFull.split(',')[0].trim();
-        const sanitizedPidOwner = primaryOwner.replace(/[^a-zA-Z0-9]/g, '');
-        const userDataDir = path.join(process.cwd(), `zara_user_profile_${sanitizedPidOwner}`);
-
-        // Re-init with explicit userDataDir
-        browserContext = await initBrowser(userDataDir);
+        // Re-init with default path
+        browserContext = await initBrowser();
       } catch (e) {
         logger.error(`[Sniper] Recovery failed: ${e.message}`);
       }
@@ -1996,15 +2024,8 @@ async function sniperLoop(task, telegramBot, logger) {
         // Ensure browser is initialised with Current Proxy
         let browser = await getBrowser();
         if (!browser) {
-          const proxy = proxyManager.getPlaywrightProxy();
-
-          // Calculate userDataDir (replicated logic)
-          const ownerIdFull = process.env.OWNER_ID || 'default';
-          const primaryOwner = ownerIdFull.split(',')[0].trim();
-          const sanitizedPidOwner = primaryOwner.replace(/[^a-zA-Z0-9]/g, '');
-          const userDataDir = path.join(process.cwd(), `zara_user_profile_${sanitizedPidOwner}`);
-
-          browser = await initBrowser(userDataDir, proxy);
+          // Init with default (Owner-Aware) path from browser.js
+          browser = await initBrowser();
         }
 
 
@@ -2043,6 +2064,10 @@ async function sniperLoop(task, telegramBot, logger) {
 
     try {
       await initPage();
+
+      // --- IMPOSSIBLE TRAVEL PROTECTION ---
+      await checkImpossibleTravel(page, task.url, logger);
+
       logger.log(`[Hybrid Sniper] Started for ${task.productName} [${task.selectedSize?.name}]`, true);
 
       // Pre-hunting delay to avoid instant API spam (looks more natural)

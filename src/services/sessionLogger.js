@@ -290,5 +290,5 @@ class SessionLogger {
   }
 }
 
-const sessionLogger = new SessionLogger();
-export default sessionLogger;
+// export const instead of default to match named import in browser.js
+export const sessionLogger = new SessionLogger();

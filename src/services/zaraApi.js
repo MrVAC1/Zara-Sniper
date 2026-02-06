@@ -1,7 +1,7 @@
 import { getHeaders } from './tokenManager.js';
 import { USER_AGENT } from './browser.js';
 import { getTimeConfig } from '../utils/timeUtils.js';
-import sessionLogger from './sessionLogger.js';
+import { sessionLogger } from './sessionLogger.js';
 
 const { TIMEOUT_API_RETRY } = getTimeConfig();
 

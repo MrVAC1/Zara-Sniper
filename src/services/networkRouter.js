@@ -16,7 +16,7 @@ import { HttpProxyAgent } from 'http-proxy-agent';
 // Disable SSL certificate validation for Bright Data proxies
 // This is required because Bright Data uses SSL interception (MITM)
 // which results in self-signed certificates
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+// process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 // Track current routing mode
 let isCheckoutPhase = false;

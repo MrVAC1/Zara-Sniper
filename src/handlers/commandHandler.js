@@ -266,6 +266,8 @@ export async function handleTasks(ctx, page = 1, statusFilter = null) {
  * Детальний перегляд завдання
  */
 export async function handleTaskDetail(ctx, taskId, prevFilter = 'all', prevPage = 1) {
+  if (ctx.callbackQuery) await ctx.answerCbQuery().catch(() => { });
+
   const task = await SniperTask.findById(taskId);
   if (!task) {
     return ctx.reply('❌ Завдання не знайдено.');
@@ -451,6 +453,8 @@ export async function handleGlobalScreenshot(ctx) {
  * Команда /pause
  */
 export async function handlePause(ctx, taskId) {
+  if (ctx.callbackQuery) await ctx.answerCbQuery().catch(() => { });
+
   if (!taskId) {
     return ctx.reply('❌ Вкажіть ID завдання: /pause <id>');
   }
@@ -473,6 +477,8 @@ export async function handlePause(ctx, taskId) {
  * Команда /resume
  */
 export async function handleResume(ctx, taskId) {
+  if (ctx.callbackQuery) await ctx.answerCbQuery().catch(() => { });
+
   if (!taskId) {
     return ctx.reply('❌ Вкажіть ID завдання: /resume <id>');
   }
@@ -495,6 +501,8 @@ export async function handleResume(ctx, taskId) {
  * Глобальна пауза всіх завдань
  */
 export async function handlePauseAll(ctx) {
+  if (ctx.callbackQuery) await ctx.answerCbQuery().catch(() => { });
+
   const { isOwner } = await import('../utils/auth.js');
   if (!isOwner(ctx.from.id)) {
     return ctx.reply('⛔ Тільки власник може використовувати цю команду.');
@@ -535,6 +543,8 @@ export async function handlePauseAll(ctx) {
  * Глобальне поновлення всіх завдань
  */
 export async function handleResumeAll(ctx, telegramBot) {
+  if (ctx.callbackQuery) await ctx.answerCbQuery().catch(() => { });
+
   const { isOwner } = await import('../utils/auth.js');
   if (!isOwner(ctx.from.id)) {
     return ctx.reply('⛔ Тільки власник може використовувати цю команду.');
@@ -575,6 +585,8 @@ export async function handleResumeAll(ctx, telegramBot) {
  * Команда /delete з меню вибору
  */
 export async function handleDeleteMenu(ctx) {
+  if (ctx.callbackQuery) await ctx.answerCbQuery().catch(() => { });
+
   const userId = ctx.from.id;
   const user = await User.findOne({ telegramId: userId });
 
@@ -655,6 +667,8 @@ export async function handleDelete(ctx, taskId) {
  * Видалення всіх завдань
  */
 export async function handleDeleteAll(ctx) {
+  if (ctx.callbackQuery) await ctx.answerCbQuery().catch(() => { });
+
   const userId = ctx.from.id;
   const user = await User.findOne({ telegramId: userId });
 
@@ -684,6 +698,8 @@ export async function handleDeleteAll(ctx) {
  * Команда /stop
  */
 export async function handleStop(ctx) {
+  if (ctx.callbackQuery) await ctx.answerCbQuery().catch(() => { });
+
   const userId = ctx.from.id;
   console.log(`[Bot] Отримано команду /stop від ${userId}`);
 
@@ -765,6 +781,8 @@ export async function handleLogs(ctx) {
  * Команда /ua - перевірка User Agent та Fingerprint
  */
 export async function handleUACheck(ctx) {
+  if (ctx.callbackQuery) await ctx.answerCbQuery().catch(() => { });
+
   const { isOwner } = await import('../utils/auth.js');
   if (!isOwner(ctx.from.id)) {
     return ctx.reply('⛔ Бот працює в Shared Mode. Команда доступна лише адміністратору.');

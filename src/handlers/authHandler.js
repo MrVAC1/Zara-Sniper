@@ -1,6 +1,6 @@
 
 import { getContext, attachAkamaiDetector } from '../services/browser.js';
-import { saveSession } from '../services/session.js';
+// import { saveSession } from '../services/session.js'; // REMOVED
 import { reportError } from '../services/logService.js';
 import User from '../models/User.js';
 
@@ -115,8 +115,8 @@ export async function handleLogin(ctx) {
 
     await new Promise(r => setTimeout(r, 5000)); // Final settle
 
-    // 6. Save Valid Session
-    await saveSession(context);
+    // 6. Save Valid Session (Read-Only Mode: Skipped)
+    // await saveSession(context);
 
     // Final Screenshot
     const finalShot = await page.screenshot({ type: 'jpeg', quality: 70 });

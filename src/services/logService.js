@@ -1,7 +1,7 @@
 import Log from '../models/Log.js';
 import fs from 'fs';
 import path from 'path';
-import sessionLogger from './sessionLogger.js';
+import { sessionLogger } from './sessionLogger.js';
 
 let botInstance = null;
 const OWNER_IDS = process.env.OWNER_ID ? process.env.OWNER_ID.split(',').map(id => id.trim()) : [];

@@ -2,7 +2,7 @@ import SniperTask from '../models/SniperTask.js';
 import User from '../models/User.js';
 import { parseProductOptions } from './zaraParser.js';
 import { getBotId } from '../utils/botUtils.js';
-import sessionLogger from './sessionLogger.js';
+import { sessionLogger } from './sessionLogger.js';
 
 
 /**

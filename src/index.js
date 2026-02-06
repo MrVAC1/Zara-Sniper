@@ -29,32 +29,36 @@ import { setBotInstance } from './utils/botInstance.js';
 import { getBotId } from './utils/botUtils.js';
 import { getTimeConfig } from './utils/timeUtils.js';
 import { setLogServiceBot } from './services/logService.js';
-import { startSessionSync, saveSession } from './services/session.js';
+// import { startSessionSync } from './services/session.js'; // REMOVED (Read-Only)
 
 const { GOTO_TIMEOUT } = getTimeConfig();
 
 // Environment already loaded at top
 
 // --- SSL CERTIFICATE RESTORATION ---
-if (process.env.SSL_CERT_BASE64) {
-  try {
-    const certBuffer = Buffer.from(process.env.SSL_CERT_BASE64, 'base64');
-    const certPath = path.resolve('./brightdata_proxy.crt');
-    fs.writeFileSync(certPath, certBuffer);
-    process.env.NODE_EXTRA_CA_CERTS = certPath;
-    console.log('✅ [KBM Logic] SSL Certificate restored and NODE_EXTRA_CA_CERTS set.');
-  } catch (err) {
-    console.error('❌ [System] SSL Restoration failed:', err.message);
+// (Only if Proxy is used, otherwise direct connection is safe/standard)
+if (process.env.USE_BROWSER_PROXY !== 'false') {
+  if (process.env.SSL_CERT_BASE64) {
+    try {
+      const certBuffer = Buffer.from(process.env.SSL_CERT_BASE64, 'base64');
+      const certPath = path.resolve(process.cwd(), 'custom_ca.crt');
+      fs.writeFileSync(certPath, certBuffer);
+      process.env.NODE_EXTRA_CA_CERTS = certPath;
+      console.log('[System] 🛡️ Loaded custom SSL certificate from SSL_CERT_BASE64 (ENV)');
+    } catch (err) {
+      console.error('❌ [System] SSL Restoration failed:', err.message);
+    }
+  } else {
+    const sslCertPath = path.join(process.cwd(), 'brightdata_proxy.crt');
+    if (fs.existsSync(sslCertPath)) {
+      process.env.NODE_EXTRA_CA_CERTS = sslCertPath;
+      console.log(`[System] 🛡️ Loaded custom SSL certificate: ${sslCertPath}`);
+    }
   }
 } else {
-  const sslCertPath = path.join(process.cwd(), 'brightdata_proxy.crt');
-  if (fs.existsSync(sslCertPath)) {
-    process.env.NODE_EXTRA_CA_CERTS = sslCertPath;
-    console.log(`[System] 🛡️ Loaded custom SSL certificate: ${sslCertPath}`);
-  } else {
-    // console.warn(`[System] ⚠️ SSL certificate not found at ${sslCertPath}`);
-  }
+  console.log('[System] ⚠️ SSL Restoration Skipped (USE_BROWSER_PROXY=false)');
 }
+// -----------------------------------
 // -----------------------------------
 
 // --- GLOBAL LOGGING PREFIX ---
@@ -129,154 +133,16 @@ if (!BOT_TOKEN || !OWNER_ID_RAW) {
 import { proxyManager } from './services/proxyManager.js';
 
 // Ініціалізація бота
+// Bot variable declaration (init moved to main)
 let bot;
 let telegramOptions = {};
 
-// Use Proxy Manager for Telegram (Priority)
-const currentProxy = proxyManager.getCurrentProxy();
-if (process.env.PROXY_URL) {
-  const proxyUrl = process.env.PROXY_URL;
-  console.log(`[System] Using Env Proxy for Telegram: ${proxyUrl.startsWith('socks') ? 'SOCKS' : 'HTTPS'}`);
-  telegramOptions.agent = proxyUrl.startsWith('socks') ? new SocksProxyAgent(proxyUrl) : new HttpsProxyAgent(proxyUrl);
-} else if (currentProxy) {
-  const proxyUrl = currentProxy.server.replace('http://', 'http://' + (currentProxy.username ? `${currentProxy.username}:${currentProxy.password}@` : ''));
-  console.log(`[Network] Telegram: Proxy Active (${currentProxy.server})`);
-  telegramOptions.agent = new HttpsProxyAgent(proxyUrl);
-} else {
-  console.warn(`[Network] Telegram: Direct Connection (No Proxy Available)`);
-}
-
-bot = new Telegraf(BOT_TOKEN, { telegram: telegramOptions });
+// Proxy checking moved to internal main() logic
+// ...
 
 // Middleware безпеки
-bot.use(checkAccess);
+// Handlers moved to setupBotHandlers function
 
-
-// Команди
-bot.command('start', handleStart);
-bot.command('add', handleAdd);
-bot.command('tasks', handleTasks);
-bot.command('view', handleView);
-bot.command('help', handleHelp);
-bot.command('stop', handleStop);
-bot.command('delete', (ctx) => handleDelete(ctx)); // Обробка без аргументів
-bot.command('info', handleInfo);
-
-// --- NEW SCREENSHOT COMMAND ---
-bot.command('screenshot', handleGlobalScreenshot);
-// ------------------------------
-
-// --- LOGS COMMAND ---
-bot.command('logs', handleLogs);
-bot.command('login', handleLogin);
-bot.command('restart', handleRestart);
-bot.command('ua', handleUACheck); // UA Check command
-// --------------------
-
-// Обробка кнопок головного меню (Reply Keyboard)
-bot.hears('➕ Додати', handleAdd);
-bot.hears('📊 Статус', handleTasks);
-bot.hears('📸 View', handleView);
-bot.hears('🖥 Screenshot', handleGlobalScreenshot);
-bot.hears('🗑 Видалити', handleDeleteMenu);
-bot.hears('ℹ️ Info', handleInfo);
-bot.hears('🛑 Стоп', handleStop);
-bot.hears('🔄 Рестарт', handleRestart);
-bot.hears('⏸ Pause All', handlePauseAll);
-bot.hears('▶️ Resume All', (ctx) => handleResumeAll(ctx, bot));
-
-// Callback queries для головного меню (для сумісності, якщо старі повідомлення залишились)
-bot.action('cmd_start', handleStart);
-bot.action('cmd_add', handleAdd);
-bot.action('cmd_tasks', handleTasks);
-bot.action('cmd_view', handleView);
-bot.action('cmd_info', handleInfo);
-bot.action('cmd_delete_menu', handleDeleteMenu); // Нове меню видалення
-bot.action('cmd_delete_all', (ctx) => {
-  // Legacy support or direct call if needed
-  handleDeleteMenu(ctx);
-});
-bot.action('cmd_stop', handleStop);
-
-// Callback queries для завдань
-bot.action(/^pause_task:(.+)$/, async (ctx) => {
-  const taskId = ctx.match[1];
-  await handlePause(ctx, taskId);
-});
-bot.action(/^resume_task:(.+)$/, async (ctx) => {
-  const taskId = ctx.match[1];
-  await handleResume(ctx, taskId);
-});
-bot.action(/^delete_task:(.+)$/, async (ctx) => {
-  const taskId = ctx.match[1];
-  await handleDelete(ctx, taskId);
-});
-bot.action(/^view_task:(.+)$/, async (ctx) => {
-  const taskId = ctx.match[1];
-  await handleTaskScreenshot(ctx, taskId);
-});
-bot.action('cmd_delete_all_confirm', handleDeleteAll);
-
-// --- NEW PAGINATION & DETAILS CALLBACKS ---
-bot.action(/^tasks_page:(.+)$/, async (ctx) => {
-  const payload = ctx.match[1];
-  const [page, filter] = payload.split(':');
-  await handleTasks(ctx, page, filter || null);
-});
-
-bot.action(/^filter_status:(.+)$/, async (ctx) => {
-  const status = ctx.match[1];
-  await handleTasks(ctx, 1, status === 'all' ? null : status);
-});
-
-bot.action(/^task_detail:(.+)$/, async (ctx) => {
-  const payload = ctx.match[1];
-  const [taskId, filter, page] = payload.split(':');
-  await handleTaskDetail(ctx, taskId, filter || 'all', page || 1);
-});
-
-bot.action(/^restart_task:(.+)$/, async (ctx) => {
-  const taskId = ctx.match[1];
-  await handleResume(ctx, taskId); // Reuse resume logic for restart
-});
-
-bot.action(/^stop_task:(.+)$/, async (ctx) => {
-  const taskId = ctx.match[1];
-  await handlePause(ctx, taskId); // Reuse pause logic for stop
-});
-
-bot.action('confirm_global_restart', (ctx) => handleConfirmRestart(ctx, bot));
-bot.action('cancel_restart', (ctx) => ctx.deleteMessage().catch(() => { }));
-// ------------------------------------------
-
-// Callback queries (вибір кольору та розміру)
-bot.action('back_to_colors', async (ctx) => {
-  await handleColorSelection(ctx, 'back_to_colors');
-});
-
-bot.action(/^select_color:(.+)$/, async (ctx) => {
-  const colorIndex = ctx.match[1];
-  await handleColorSelection(ctx, colorIndex);
-});
-
-bot.action(/^select_size:(.+):(.+)$/, async (ctx) => {
-  const [, colorIndex, sizeIndex] = ctx.match;
-  await handleSizeSelection(ctx, colorIndex, sizeIndex);
-});
-
-// Обробка URL
-bot.on('text', async (ctx) => {
-  const text = ctx.message.text;
-
-  // Перевірка чи це URL і чи це Zara
-  if (text.match(/^https?:\/\//)) {
-    if (text.includes('zara.com')) {
-      await handleProductUrl(ctx, text);
-    } else {
-      await ctx.reply('❌ Я працюю тільки з посиланнями на zara.com');
-    }
-  }
-});
 
 import { startSessionHealthCheck } from './services/healthGuard.js';
 
@@ -285,14 +151,8 @@ import { startSessionHealthCheck } from './services/healthGuard.js';
 // Start Session Health Check
 startSessionHealthCheck();
 
-// Обробка помилок
-bot.catch((err, ctx) => {
-  console.error('❌ Помилка в боті:', err);
-  // Намагаємось відповісти, якщо це можливо
-  try {
-    ctx.reply('❌ Сталася помилка. Спробуйте ще раз.');
-  } catch (e) { }
-});
+// Error handling moved to setupErrorHandling provided by service
+
 
 // Головна функція
 async function main() {
@@ -344,7 +204,12 @@ async function main() {
     const pidFileName = `.pid_${sanitizedPidOwner}`;
 
     const pidFilePath = path.join(process.cwd(), pidFileName);
-    const userDataDir = path.join(process.cwd(), `zara_user_profile_${sanitizedPidOwner}`);
+    const userDataDir = path.join(process.cwd(), 'profiles', `zara_user_profile_${sanitizedPidOwner}`);
+
+    // Ensure profiles directory exists
+    if (!fs.existsSync(userDataDir)) {
+      fs.mkdirSync(userDataDir, { recursive: true });
+    }
 
     try {
       fs.writeFileSync(pidFilePath, process.pid.toString());
@@ -357,214 +222,237 @@ async function main() {
     // Підключення до БД
     await connectDatabase();
 
-    // Drop old unique index on SKU if exists (Technical Debt Cleanup)
-    try {
-      await import('mongoose').then(m => m.connection.collection('snipertasks').dropIndex('sku_1'));
-      console.log('✅ Index sku_1 dropped (if existed)');
-    } catch (e) { /* ignore if not exists */ }
+    // 1. TELEGRAM PROXY & INIT (Conditional based on .env)
+    console.log('[Bootstrap] 1. Initializing Telegram...');
 
-    // Створення власників якщо не існують
-    const { getOwnerIds } = await import('./utils/auth.js');
-    const ownerIds = getOwnerIds();
-    for (const oid of ownerIds) {
-      await User.findOneAndUpdate(
-        { telegramId: oid },
-        { telegramId: oid, isOwner: true },
-        { upsert: true, new: true }
-      );
-    }
+    // Check if Telegram proxy is enabled
+    const useTelegramProxy = process.env.USE_TELEGRAM_PROXY === 'true';
+    let telegramProxy = null;
 
-    // Скидання статусів "завислих" завдань (якщо такі є в моделі SniperTask)
-    // Оскільки в наданому коді немає статусу 'stopping', скинемо ті, які могли зависнути в 'hunting' 
-    // якщо це потрібно, або просто залишимо це на розсуд engine.
-    // Але оскільки запит був про 'stopping' або 'processing', реалізуємо загальне скидання
-    // Припускаючи, що SniperTask - це основна модель для завдань.
-    // Якщо у SniperTask є інші статуси, які блокують роботу, їх треба додати сюди.
-    // В даному випадку ми не чіпаємо 'hunting', бо вони мають перезапуститись.
-    console.log('🔄 Перевірка цілісності бази даних...');
+    // CLEAN OPTIONS: Always start with explicit agent configuration
+    let telegramOptions = { agent: null };
 
-
-    // Перевірка режиму входу (Login Mode)
-    if (process.argv.includes('--login')) {
-      await startLoginSession(userDataDir);
-      // Після закриття вікна входу завершуємо роботу скрипта, 
-      // щоб користувач міг перезапустити бота в звичайному режимі
-      process.exit(0);
-    }
-
-    // Ініціалізація браузера (стандартний режим)
-    console.log('🔄 Ініціалізація браузера...');
-    const context = await initBrowser(userDataDir);
-
-    // Initial Session Sync Start
-    startSessionSync(context);
-
-    // Wait for browser to stabilize (especially on Legacy macOS)
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    console.log(`[Owner: ${process.env.OWNER_ID.split(',')[0].trim()}] ⏳ Waiting 2s for browser stabilization... [OPTIMIZED: was 5s]`);
-    setTimeout(() => {
-      startAutoCleanup(context, activePages);
-    }, 300000);
-
-    // Check for active tasks to optimize startup
-    const currentBotId = getBotId();
-    const activeTasksCount = await SniperTask.countDocuments({
-      botId: currentBotId,
-      status: { $in: ['hunting', 'SEARCHING', 'PENDING', 'MONITORING', 'processing', 'at_checkout'] }
-    });
-
-    if (activeTasksCount > 0) {
-      console.log(`⚡ [Startup] Found ${activeTasksCount} active tasks.`);
-
-      // 3. Restoration (Priority #1)
-      // NON-BLOCKING: Run in background
-      console.log('📥 [Bootstrap] Починаю відновлення активних завдань (у фоні)...');
-      initializeActiveTasks(context, bot).catch(restoreError => {
-        console.error('⚠️ [Bootstrap] Помилка відновлення завдань:', restoreError);
-      });
-    }
-
-    // 4. Ensure Main Page (Always)
-    // User Request: "Нехай завжди буде відкрита вкладка з головною сторінкою Zara"
-    // We execute this concurrently/sequentially
-    // 4. Ensure Main Page (Always)
-    // User Request: "Нехай завжди буде відкрита вкладка з головною сторінкою Zara"
-    (async () => {
-      let attempts = 0;
-      const MAX_RETRIES = 3;
-
-      while (attempts < MAX_RETRIES) {
-        try {
-          // Verify/Get Fresh Context (in case of rotation)
-          let currentContext = await getBrowser();
-          if (!currentContext) {
-            console.log('🔄 [MainTab] Context closed, re-initializing...');
-            currentContext = await initBrowser(userDataDir);
-          }
-
-          const pages = currentContext.pages();
-          const isHomePage = (url) => url.includes('zara.com/ua/uk') && !url.includes('/product') && !url.includes('/search');
-          const hasMainPage = pages.some(p => isHomePage(p.url()));
-
-          if (!hasMainPage) {
-            console.log('🌐 [MainTab] Opening persistent Zara home tab...');
-            const page = await currentContext.newPage();
-
-            // Use safeNavigate with rotation handling
-            await safeNavigate(page, 'https://www.zara.com/ua/uk/', { timeout: 60000 });
-
-            console.log('✅ [MainTab] Home page loaded successfully.');
-
-            console.log('⏳ [MainTab] Waiting 5 seconds before checking store selection...');
-            await new Promise(r => setTimeout(r, 5000));
-
-            // Handle "Stay in Store" and other popups
-            const { removeUIObstacles } = await import('./services/browser.js');
-            await removeUIObstacles(page);
-          } else {
-            console.log('✅ [MainTab] Home page already open.');
-          }
-          break; // Success
-
-        } catch (e) {
-          if (e.message === 'PROXY_ROTATION_REQUIRED') {
-            console.warn(`[MainTab] 🔄 Proxy Rotation triggered during startup (Attempt ${attempts + 1}/${MAX_RETRIES}).`);
-            attempts++;
-            // Context is already closed by safeNavigate, loop will re-init
-            continue;
-          }
-          console.error('⚠️ [MainTab] Creation error:', e.message);
-          break; // Unknown error, abort to avoid infinite loop
-        }
-      }
-    })();
-
-    // Збереження екземпляру бота
-    setBotInstance(bot);
-    setLogServiceBot(bot); // Initialize Log Service with Bot
-
-    // 5. Bot Launch (Robust Retry Mechanism with Proxy Rotation)
-    // Запуск бота з очищенням черги очікуючих оновлень
-    const MAX_LAUNCH_RETRIES = 50; // Increased retries for resilience
-    let botStarted = false;
-
-    // Use a loop to keep retrying indefinitely if needed (or up to MAX_LAUNCH_RETRIES)
-    // The user requested prevent exit, so we try hard.
-    for (let i = 0; i < MAX_LAUNCH_RETRIES; i++) {
+    if (useTelegramProxy) {
+      // STRICT: Retrieve proxy from dedicated Webshare list
       try {
-        // Log current network state
-        const currentProxy = proxyManager.getCurrentProxy();
-        if (currentProxy) {
-          console.log(`[Network] Telegram: Proxy Active (${currentProxy.server})`);
-        } else {
-          console.log(`[Network] Telegram: Direct Connection`);
-        }
+        telegramProxy = proxyManager.getTelegramProxy();
+        console.log(`[Proxy: Telegram] Using ${telegramProxy.masked}`);
+        telegramOptions.agent = new HttpsProxyAgent(telegramProxy.url, {
+          timeout: 10000,
+          keepAlive: true,
+          keepAliveMsecs: 30000
+        });
+      } catch (e) {
+        console.error(`[FATAL] Telegram Proxy Error: ${e.message}`);
+        process.exit(1);
+      }
+    } else {
+      console.log('[Proxy: Telegram] Direct connection (USE_TELEGRAM_PROXY=false)');
+      telegramOptions.agent = null; // Explicit null for direct connection
+    }
 
-        // Attempt to launch
-        await bot.launch({ dropPendingUpdates: true });
-        console.log('✅ Telegram бот запущено (попередні оновлення відхилено)');
-        botStarted = true;
+    bot = new Telegraf(BOT_TOKEN, { telegram: telegramOptions });
+
+    // Initialize Handlers BEFORE validation
+    setupBotHandlers(bot);
+    console.log('[Handlers] Registering Telegram handlers...');
+    console.log('[Bootstrap] Bot Handlers Configured.');
+
+    // 2. VALIDATE TELEGRAM CONNECTION (using getMe() instead of launch)
+    console.log('[Bootstrap] 2. Validating Telegram Connection...');
+
+    // Show actual Telegram proxy status
+    if (telegramProxy) {
+      console.log(`[Network] Telegram: Tunneled via ${telegramProxy.masked}`);
+    } else {
+      console.log(`[Network] Telegram: Direct Connection`);
+    }
+
+    // Validation wrapper using getMe() (proven to work in 194ms)
+    const validateWithTimeout = (timeout = 30000) => {
+      return Promise.race([
+        bot.telegram.getMe(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('CONNECTION_TIMEOUT')), timeout)
+        )
+      ]);
+    };
+
+    const MAX_TELEGRAM_RETRIES = 3;
+    let connectionValid = false;
+
+    for (let attempt = 1; attempt <= MAX_TELEGRAM_RETRIES; attempt++) {
+      try {
+        console.log(`[Bootstrap] Connection validation attempt ${attempt}/${MAX_TELEGRAM_RETRIES}...`);
+
+        const me = await validateWithTimeout(30000);
+        console.log(`✅ Telegram connection validated: @${me.username} (ID: ${me.id})`);
+        connectionValid = true;
         break;
 
-      } catch (botErr) {
-        console.error(`❌ [Network] Telegram connection failed (Attempt ${i + 1}/${MAX_LAUNCH_RETRIES}):`, botErr.message);
+      } catch (err) {
+        const errorCode = err.code || err.name || 'UNKNOWN';
+        console.error(`❌ [Telegram] Validation failed (Attempt ${attempt}/${MAX_TELEGRAM_RETRIES})`);
+        console.error(`   Error Code: ${errorCode}`);
+        console.error(`   Message: ${err.message}`);
 
-        // Rotate Proxy on Failure
-        console.log('[Network] Rotating proxy...');
-        const nextProxy = proxyManager.getNextProxy(); // Returns new proxy config
+        // If more attempts left, rotate to next Telegram proxy (ONLY if proxy mode enabled)
+        if (attempt < MAX_TELEGRAM_RETRIES) {
+          if (useTelegramProxy) {
+            // Rotate to next proxy
+            try {
+              const nextProxy = proxyManager.getNextTelegramProxy();
+              console.log(`[Network] Rotating to next Telegram proxy: ${nextProxy.masked}`);
 
-        // Recreate Agent
-        if (nextProxy) {
-          const proxyUrl = nextProxy.server.replace('http://', 'http://' + (nextProxy.username ? `${nextProxy.username}:${nextProxy.password}@` : ''));
-          // Update agent safely
-          if (bot.telegram && bot.telegram.options) {
-            bot.telegram.options.agent = new HttpsProxyAgent(proxyUrl);
-            console.log(`[Network] Telegram agent updated to: ${nextProxy.server}`);
-          }
-        } else {
-          // If direct was planned or no proxies left (should circular rotate though)
-          if (bot.telegram && bot.telegram.options) {
-            bot.telegram.options.agent = undefined;
-            console.log(`[Network] Telegram agent switched to Direct.`);
+              // Update agent with socket timeout
+              if (bot.telegram && bot.telegram.options) {
+                bot.telegram.options.agent = new HttpsProxyAgent(nextProxy.url, {
+                  timeout: 10000,
+                  keepAlive: true,
+                  keepAliveMsecs: 30000
+                });
+              }
+
+              await new Promise(r => setTimeout(r, 2000)); // Brief delay before retry
+            } catch (proxyErr) {
+              console.error(`[FATAL] ${proxyErr.message}`);
+              break; // No more proxies available
+            }
+          } else {
+            // Direct connection mode - just wait and retry
+            console.log('[Network] Retrying direct connection...');
+            await new Promise(r => setTimeout(r, 2000));
           }
         }
-
-        // Wait before retry
-        await new Promise(r => setTimeout(r, 5000));
       }
     }
 
-    if (!botStarted) {
-      console.error('❌ Failed to connect to Telegram after multiple attempts. Continuing in limited mode (Server active).');
-      // Do NOT process.exit(1) to keep HTTP server alive for HF
+    // STRICT: If validation failed, EXIT
+    if (!connectionValid) {
+      console.error('');
+      console.error('═══════════════════════════════════════════════════════════');
+      console.error('❌ FATAL ERROR: Telegram Connection Validation Failed');
+      console.error('═══════════════════════════════════════════════════════════');
+      if (useTelegramProxy) {
+        console.error('Reason: All Webshare proxies exhausted or invalid.');
+        console.error('Action: Check "Webshare 10 proxies.txt" credentials.');
+      } else {
+        console.error('Reason: Unable to reach Telegram API servers.');
+        console.error('Action: Check your internet connection.');
+      }
+      console.error('═══════════════════════════════════════════════════════════');
+      console.error('');
+      process.exit(1);
     }
 
-    // startAllSnipers(bot); // Видаляємо або коментуємо, щоб не дублювати запуск
+    // 3. LAUNCH BOT IN BACKGROUND (non-blocking)
+    console.log('[Bootstrap] 3. Starting Telegram bot...');
+    bot.launch({ dropPendingUpdates: true })
+      .then(() => {
+        console.log('✅ Telegram бот запущено (попередні оновлення відхілено)');
+      })
+      .catch(err => {
+        console.error(`⚠️ Bot launch warning: ${err.message}`);
+        // Connection is validated, so this is non-critical
+      });
 
-    /* 
-    // OLD LOGIC
-    // Запуск всіх активних завдань
-    await startAllSnipers(bot);
-    console.log('✅ Активні завдання запущено');
-    
-    // NEW: Open all necessary tabs immediately if hunting
-    const huntingTasks = await import('./models/SniperTask.js').then(m => m.default.find({ status: 'hunting' }));
-    if (huntingTasks.length > 0) {
-        console.log(`🌐 Відкриття вкладок для ${huntingTasks.length} активних завдань...`);
-        // ... (rest of old logic)
+    // Save bot instance early
+    setBotInstance(bot);
+    setLogServiceBot(bot);
+
+    // 3. BROWSER PROXY SELECTION (Conditional)
+    let globalProxy = null;
+    if (process.env.USE_BROWSER_PROXY === 'true') {
+      console.log('[Bootstrap] 3. Selecting Global Browser Proxy...');
+      globalProxy = proxyManager.getBrowserProxy(0);
+      if (!globalProxy) {
+        console.error('[FATAL] No Browser Proxy found (ips-isp_proxy.txt)!');
+        process.exit(1);
+      }
+      console.log(`[Proxy: Browser] Selected Global Proxy: ${globalProxy.server}`);
+    } else {
+      console.warn('[Bootstrap] ⚠️ BROWSER PROXY DISABLED via .env (USE_BROWSER_PROXY=false)');
     }
-    */
 
-    // Створення системного трею
-    createSystemTray(bot);
+    // 4. STRICT SESSION VALIDATION
+    console.log('[Bootstrap] 4. Validating Session File...');
+    const { loadSession, saveSession } = await import('./services/session.js');
+    const sessionPath = await loadSession();
 
-    // Налаштування обробки помилок
-    setupErrorHandling(bot, getBrowser());
+    let isLoginMode = process.argv.includes('--login');
 
-    // --- START WATCHDOG ---
-    startGlobalWatchdog(bot);
+    if (!sessionPath && !isLoginMode) {
+      console.log('[Bootstrap] ⚠️ Session missing. Switching to AUTO-LOGIN mode.');
+      isLoginMode = true;
+    } else if (isLoginMode) {
+      console.log('[Bootstrap] ⚠️ Login Mode: Starting fresh session to authenticate.');
+    }
 
-    console.log('✅ Zara Sniper Bot готовий до роботи!');
+    // 5. STRICT BROWSER LAUNCH (Kill-Switch inside)
+    // DECOUPLED: Browser init deferred to allow Telegram event loop to process pending updates first
+    console.log('[Bootstrap] 5. Decoupling Browser Init (setImmediate for Telegram responsiveness)...');
+
+    setImmediate(async () => {
+      try {
+        console.log('[Bootstrap] 🚀 Starting browser initialization...');
+        const context = await initBrowser(userDataDir, globalProxy);
+
+        if (isLoginMode) {
+          await startLoginSession(userDataDir);
+          console.log('[System] Login session finished. Exiting.');
+          await closeBrowser();
+          process.exit(0);
+        }
+
+        // 6. AUTOMATION START
+        console.log('[Bootstrap] 6. Starting Automation...');
+
+        // Wait for browser to stabilize (especially on Legacy macOS)
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        console.log(`[Owner: ${process.env.OWNER_ID.split(',')[0].trim()}] ⏳ Waiting 2s for browser stabilization... [OPTIMIZED: was 5s]`);
+        setTimeout(() => {
+          startAutoCleanup(context, activePages);
+        }, 300000);
+
+        // Check for active tasks to optimize startup
+        const currentBotId = getBotId();
+        const activeTasksCount = await SniperTask.countDocuments({
+          botId: currentBotId,
+          status: { $in: ['hunting', 'SEARCHING', 'PENDING', 'MONITORING', 'processing', 'at_checkout'] }
+        });
+
+        // Browser initialization has completed, active tasks can start
+        if (activeTasksCount > 0) {
+          console.log(`⚡ [Startup] Found ${activeTasksCount} active tasks.`);
+
+          // NON-BLOCKING: Run in background
+          console.log('📥 [Bootstrap] Починаю відновлення активних завдань (у фоні)...');
+          initializeActiveTasks(context, bot).catch(restoreError => {
+            console.error('⚠️ [Bootstrap] Помилка відновлення завдань:', restoreError);
+          });
+        }
+
+        // 4. Ensure Main Page (Handled by initBrowser Keeper Tab)
+        // No explicit check needed here as initBrowser now awaits the keeper tab.
+
+        // Створення системного трею
+        createSystemTray(bot);
+
+        // Налаштування обробки помилок
+        setupErrorHandling(bot, getBrowser());
+
+        // --- START WATCHDOG ---
+        startGlobalWatchdog(bot);
+
+        console.log('✅ Zara Sniper Bot готовий до роботи!');
+      } catch (browserError) {
+        console.error('❌ [Bootstrap] Browser initialization failed:', browserError);
+        process.exit(1);
+      }
+    });
+
+    // Telegram bot is now ready to respond immediately while browser initializes in background
+    console.log('✅ Telegram бот активний і готовий приймати команди (браузер ініціалізується у фоні)...');
 
     // Graceful shutdown
     process.once('SIGINT', () => shutdown('SIGINT'));
@@ -611,7 +499,8 @@ async function shutdown(signal) {
     try {
       const context = await getBrowser();
       if (context) {
-        console.log('[Shutdown] Saving final session...');
+        console.log('[Shutdown] Saving session before exit...');
+        const { saveSession } = await import('./services/session.js');
         await saveSession(context);
       }
     } catch (e) {
@@ -627,6 +516,135 @@ async function shutdown(signal) {
     console.error('❌ Помилка при завершенні:', error);
     process.exit(1);
   }
+}
+
+// --- BOT HANDLERS SETUP ---
+function setupBotHandlers(bot) {
+  console.log('[Handlers] Registering Telegram handlers...');
+
+  // Global Callback Query Middleware (Logging ONLY - handlers answer individually)
+  bot.on('callback_query', async (ctx, next) => {
+    try {
+      const data = ctx.callbackQuery?.data || 'unknown';
+      const userId = ctx.from?.id || 'unknown';
+      console.log(`[Telegram] 🔘 Click detected: ${data} (User: ${userId})`);
+      // Do NOT answer here - let individual handlers do it to avoid double-answer errors
+    } catch (e) {
+      console.error(`[Telegram] Callback middleware error: ${e.message}`);
+    }
+    return next();
+  });
+
+  // Commands
+  bot.start(handleStart);
+  bot.help(handleHelp);
+  bot.command('add', handleAdd);
+  bot.command('tasks', (ctx) => handleTasks(ctx));
+  bot.command('view', handleView);
+  bot.command('pause', (ctx) => {
+    const args = ctx.message.text.split(' ');
+    if (args.length > 1) handlePause(ctx, args[1]);
+    else ctx.reply('⚠️ Usage: /pause <taskId>');
+  });
+  bot.command('resume', (ctx) => {
+    const args = ctx.message.text.split(' ');
+    if (args.length > 1) handleResume(ctx, args[1]);
+    else ctx.reply('⚠️ Usage: /resume <taskId>');
+  });
+  bot.command('delete', (ctx) => {
+    const args = ctx.message.text.split(' ');
+    if (args.length > 1) handleDelete(ctx, args[1]);
+    else handleDeleteMenu(ctx);
+  });
+  bot.command('stop', handleStop);
+  bot.command('deleteall', handleDeleteAll);
+  bot.command('screenshot', handleGlobalScreenshot);
+  bot.command('info', handleInfo);
+  bot.command('logs', handleLogs);
+  bot.command('restart', handleRestart);
+  bot.command('pause_all', handlePauseAll);
+  bot.command('resume_all', (ctx) => handleResumeAll(ctx, bot));
+  bot.command('ua', handleUACheck);
+  bot.command('login', handleLogin);
+
+  // Actions (Callbacks)
+  bot.action('confirm_global_restart', (ctx) => handleConfirmRestart(ctx, bot));
+  bot.action('cancel_restart', async (ctx) => {
+    await ctx.answerCbQuery('❌ Cancelled');
+    await ctx.deleteMessage();
+  });
+
+  // Dynamic Callbacks (Regex)
+  bot.action(/^task_detail:(.+):(.+):(.+)$/, async (ctx) => {
+    const match = ctx.match;
+    await handleTaskDetail(ctx, match[1], match[2], match[3]);
+  });
+
+  bot.action(/^tasks_page:(.+):(.+)$/, async (ctx) => {
+    const match = ctx.match;
+    await handleTasks(ctx, match[1], match[2]);
+  });
+
+  bot.action(/^filter_status:(.+)$/, async (ctx) => {
+    const match = ctx.match;
+    await handleTasks(ctx, 1, match[1]);
+  });
+
+  bot.action(/^view_task:(.+)$/, async (ctx) => {
+    await handleTaskScreenshot(ctx, ctx.match[1]);
+  });
+
+  bot.action(/^delete_task:(.+)$/, async (ctx) => {
+    await handleDelete(ctx, ctx.match[1]);
+  });
+
+  bot.action(/^restart_task:(.+)$/, async (ctx) => {
+    await handleResume(ctx, ctx.match[1]);
+  });
+
+  bot.action(/^stop_task:(.+)$/, async (ctx) => {
+    await handlePause(ctx, ctx.match[1]);
+  });
+
+  bot.action('cmd_tasks', (ctx) => handleTasks(ctx));
+  bot.action('cmd_start', (ctx) => handleStart(ctx));
+  bot.action('cmd_delete_all_confirm', (ctx) => handleDeleteAll(ctx));
+  bot.action('ignore', (ctx) => ctx.answerCbQuery());
+
+  // Reply Keyboard Handlers (for buttons under chat)
+  bot.hears('➕ Додати', handleAdd);
+  bot.hears('📊 Статус', (ctx) => handleTasks(ctx));
+  bot.hears('📸 View', handleView);
+  bot.hears('🖥 Screenshot', handleGlobalScreenshot);
+  bot.hears('🗑 Видалити', handleDeleteMenu);
+  bot.hears('ℹ️ Info', handleInfo);
+  bot.hears('⏸ Pause All', handlePauseAll);
+  bot.hears('▶️ Resume All', (ctx) => handleResumeAll(ctx, bot));
+  bot.hears('🛑 Стоп', handleStop);
+  bot.hears('🔄 Рестарт', handleRestart);
+
+  // Text Handlers (Product URLs, Color/Size selection)
+  bot.on('text', async (ctx) => {
+    if (ctx.message.text.startsWith('/')) return; // Ignore other commands
+
+    const text = ctx.message.text;
+    // Simple URL check
+    if (text.includes('zara.com') && text.includes('/')) {
+      await handleProductUrl(ctx, text);
+    }
+  });
+
+  // Selection Callbacks (Color/Size)
+  bot.action(/^select_color:(.+)$/, async (ctx) => {
+    await handleColorSelection(ctx, ctx.match[1]);
+  });
+  bot.action(/^select_size:(.+):(.+)$/, async (ctx) => {
+    await handleSizeSelection(ctx, ctx.match[1], ctx.match[2]);
+  });
+  // Note: match[1] and match[2] depends on regex in productHandler or here.
+  // In productHandler: `callback_data: select_size:${colorIndex}:${index}` -> 2 parts.
+
+  console.log('[Bootstrap] Bot Handlers Configured.');
 }
 
 // Запуск

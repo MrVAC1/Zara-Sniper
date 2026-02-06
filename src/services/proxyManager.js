@@ -1,214 +1,216 @@
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
+import { URL } from 'url';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 dotenv.config();
 
 class ProxyManager {
   constructor() {
-    this.proxies = [];           // Array of proxy configs
-    this.currentIndex = -1;      // Current proxy index (-1 = none/direct)
-    this.blockedProxies = new Map(); // proxyUrl -> unblock timestamp
-    this.proxyStats = new Map(); // proxyUrl -> { success: 0, failures: 0 }
+    this.proxies = [];           // Browser Proxies (ips-isp_proxy.txt)
+    this.telegramProxies = [];   // Telegram Proxies (Webshare)
+    this.currentIndex = -1;      // Current Browser proxy index
+    this.blockedProxies = new Map();
+    this.proxyStats = new Map();
 
     this.maxRetries = parseInt(process.env.PROXY_MAX_RETRIES) || 3;
-    this.cooldownMs = parseInt(process.env.PROXY_COOLDOWN_MS) || 300000; // 5min default
+    this.cooldownMs = parseInt(process.env.PROXY_COOLDOWN_MS) || 300000;
 
     this.loadProxies();
   }
 
+  // Test proxy connectivity with timeout
+  async testProxy(proxyUrl, timeout = 5000) {
+    const agent = new HttpsProxyAgent(proxyUrl, { timeout });
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+      const response = await fetch('https://api.telegram.org', {
+        method: 'HEAD',
+        agent,
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+      return response.ok;
+    } catch (err) {
+      const errorCode = err.code || err.name || 'UNKNOWN';
+      console.error(`[ProxyManager] Proxy test failed (${errorCode}): ${err.message}`);
+      return false;
+    }
+  }
+
   loadProxies() {
     try {
-      const proxyListEnv = process.env.PROXY_LIST?.trim();
-
-      if (!proxyListEnv) {
-        console.log('[ProxyManager] No PROXY_LIST configured. Using direct connection.');
-        return;
+      // 1. Load BROWSER Proxies (ips-isp_proxy.txt ONLY)
+      const browserProxyPath = path.join(process.cwd(), 'ips-isp_proxy.txt');
+      if (fs.existsSync(browserProxyPath)) {
+        console.log(`[ProxyManager] 📂 Found Browser proxy file: ${browserProxyPath}`);
+        const content = fs.readFileSync(browserProxyPath, 'utf-8');
+        this.proxies = this._parseProxies(content);
+        console.log(`[ProxyManager] ✅ Loaded ${this.proxies.length} Browser proxies.`);
+      } else {
+        console.warn('[ProxyManager] ⚠️ ips-isp_proxy.txt not found. Browser will be offline or direct (if allowed).');
       }
 
-      // Parse comma-separated proxy list
-      const proxyStrings = proxyListEnv.split(',').map(p => p.trim()).filter(Boolean);
+      // 2. Load TELEGRAM Proxies (Webshare 10 proxies.txt ONLY)
+      const telegramProxyPath = path.join(process.cwd(), 'Webshare 10 proxies.txt');
+      if (fs.existsSync(telegramProxyPath)) {
+        console.log(`[ProxyManager] 📂 Found Telegram proxy file: ${telegramProxyPath}`);
+        const content = fs.readFileSync(telegramProxyPath, 'utf-8');
+        this.telegramProxies = this._parseProxies(content);
+        console.log(`[ProxyManager] ✅ Loaded ${this.telegramProxies.length} Telegram proxies.`);
+      } else {
+        console.error('[ProxyManager] ❌ "Webshare 10 proxies.txt" missing! Telegram cannot start in Strict Mode.');
+      }
 
-      this.proxies = proxyStrings.map((proxyUrl, index) => {
-        try {
-          const url = new URL(proxyUrl);
-          const config = {
-            url: proxyUrl,
-            server: `${url.protocol}//${url.host}`,
-            username: url.username || '',
-            password: url.password || '',
-            masked: `${url.protocol}//${url.username ? '***:***@' : ''}${url.host}`
-          };
-
-          // Initialize stats
-          this.proxyStats.set(proxyUrl, { success: 0, failures: 0, blocks: 0 });
-
-          return config;
-        } catch (e) {
-          console.error(`[ProxyManager] Invalid proxy format at index ${index}: ${proxyUrl}`);
-          return null;
-        }
-      }).filter(Boolean);
-
-      console.log(`[ProxyManager] ✅ Loaded ${this.proxies.length} proxies from ENV.`);
-      this.proxies.forEach((p, i) => {
-        console.log(`  [${i + 1}] ${p.masked}`);
-      });
     } catch (error) {
       console.error(`[ProxyManager] Failed to load proxies: ${error.message}`);
     }
   }
 
-  /**
-   * Get current active proxy
-   */
+  _parseProxies(rawText) {
+    return rawText
+      .split('\n')
+      .map(p => p.trim())
+      .filter(p => p && !p.startsWith('#'))
+      .map((proxyRaw, index) => {
+        try {
+          let proxyUrl = proxyRaw;
+
+          // Handle IP:PORT:USER:PASS format (Webshare format)
+          const parts = proxyRaw.split(':');
+          if (parts.length === 4) {
+            const ip = parts[0].trim();
+            const port = parts[1].trim();
+            const user = parts[2].trim();
+            const pass = parts[3].trim();
+
+            // Validate IP structure
+            if (ip.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
+              proxyUrl = `http://${user}:${pass}@${ip}:${port}`;
+              console.log(`[ProxyManager] ✓ Parsed proxy: http://${user}:***@${ip}:${port}`);
+            }
+          } else {
+            // Auto-prefix http if missing for other formats
+            if (!proxyUrl.startsWith('http') && !proxyUrl.startsWith('socks')) {
+              proxyUrl = `http://${proxyUrl}`;
+            }
+          }
+
+          const url = new URL(proxyUrl);
+          const config = {
+            url: proxyUrl,
+            server: `${url.protocol}//${url.hostname}:${url.port}`,
+            username: decodeURIComponent(url.username || ''),
+            password: decodeURIComponent(url.password || ''),
+            masked: `${url.protocol}//${url.username ? '***:***@' : ''}${url.hostname}:${url.port}`
+          };
+          this.proxyStats.set(proxyUrl, { success: 0, failures: 0, blocks: 0 });
+          return config;
+        } catch (e) {
+          console.warn(`[ProxyManager] Failed to parse proxy line ${index + 1}: ${e.message}`);
+          return null;
+        }
+      })
+      .filter(Boolean);
+  }
+
   getCurrentProxy() {
     if (this.currentIndex < 0 || this.proxies.length === 0) return null;
     return this.proxies[this.currentIndex];
   }
 
-  /**
-   * Get next healthy proxy from pool
-   * Skips blocked proxies (in cooldown)
-   */
   getNextProxy() {
     if (this.proxies.length === 0) return null;
 
-    const startIndex = this.currentIndex;
     const now = Date.now();
-
-    // Try each proxy in round-robin order
     for (let i = 0; i < this.proxies.length; i++) {
       this.currentIndex = (this.currentIndex + 1) % this.proxies.length;
       const proxy = this.proxies[this.currentIndex];
 
-      // Check if proxy is in cooldown
       const unblockTime = this.blockedProxies.get(proxy.url);
       if (unblockTime && now < unblockTime) {
-        const remainingSec = Math.ceil((unblockTime - now) / 1000);
-        console.log(`[ProxyManager] ⏭️ Skipping ${proxy.masked} (cooldown: ${remainingSec}s remaining)`);
         continue;
       }
 
-      // Remove from cooldown if time expired
       if (unblockTime) {
         this.blockedProxies.delete(proxy.url);
-        console.log(`[ProxyManager] ♻️ ${proxy.masked} cooldown expired, back in rotation`);
+        console.log(`[ProxyManager] ♻️ ${proxy.masked} cooldown expired.`);
       }
 
-      console.log(`[ProxyManager] 🔄 Selected proxy #${this.currentIndex + 1}: ${proxy.masked}`);
+      console.log(`[ProxyManager] 🔄 Selected Browser Proxy #${this.currentIndex + 1}: ${proxy.masked}`);
       return proxy;
     }
 
-    // All proxies are blocked
-    console.error('[ProxyManager] ❌ All proxies are in cooldown! Using direct connection.');
-    this.currentIndex = -1;
+    console.error('[ProxyManager] ❌ All Browser Proxies in cooldown!');
     return null;
   }
 
-  /**
-   * Mark proxy as blocked and add to cooldown
-   */
+  // STRICT: Telegram Proxy Rotation (Webshare ONLY)
+  telegramProxyIndex = 0;
+
+  getTelegramProxy() {
+    if (this.telegramProxies.length === 0) {
+      throw new Error('No Telegram proxies available in "Webshare 10 proxies.txt"');
+    }
+    // Return first proxy on initial call
+    return this.telegramProxies[0];
+  }
+
+  getNextTelegramProxy() {
+    if (this.telegramProxies.length === 0) {
+      throw new Error('FATAL: All Telegram proxies exhausted. No fallback allowed.');
+    }
+
+    // Rotate to next Telegram proxy
+    this.telegramProxyIndex = (this.telegramProxyIndex + 1) % this.telegramProxies.length;
+    const proxy = this.telegramProxies[this.telegramProxyIndex];
+
+    console.log(`[ProxyManager] 🔄 Telegram Proxy #${this.telegramProxyIndex + 1}/${this.telegramProxies.length}: ${proxy.masked}`);
+    return proxy;
+  }
+
+  getBrowserProxy(index = 0) {
+    if (this.proxies.length === 0) return null;
+    return this.proxies[index % this.proxies.length];
+  }
+
   markProxyBlocked(proxyUrl) {
     const unblockTime = Date.now() + this.cooldownMs;
     this.blockedProxies.set(proxyUrl, unblockTime);
-
-    // Update stats
     const stats = this.proxyStats.get(proxyUrl);
-    if (stats) {
-      stats.blocks++;
-    }
+    if (stats) stats.blocks++;
 
     const proxy = this.proxies.find(p => p.url === proxyUrl);
-    const masked = proxy?.masked || proxyUrl;
-
-    console.error(`[ProxyManager] 🚫 Proxy ${masked} marked as BLOCKED (cooldown: ${this.cooldownMs / 1000}s)`);
+    console.error(`[ProxyManager] 🚫 Proxy ${proxy?.masked || proxyUrl} BLOCKED.`);
   }
 
-  /**
-   * Record successful request for proxy
-   */
   recordSuccess(proxyUrl) {
     const stats = this.proxyStats.get(proxyUrl);
-    if (stats) {
-      stats.success++;
-    }
+    if (stats) stats.success++;
   }
 
-  /**
-   * Record failed request for proxy
-   */
   recordFailure(proxyUrl) {
     const stats = this.proxyStats.get(proxyUrl);
-    if (stats) {
-      stats.failures++;
-    }
+    if (stats) stats.failures++;
   }
 
-  /**
-   * Get health status for all proxies
-   */
-  getProxyHealth() {
-    return this.proxies.map((proxy, index) => {
-      const stats = this.proxyStats.get(proxy.url) || { success: 0, failures: 0, blocks: 0 };
-      const unblockTime = this.blockedProxies.get(proxy.url);
-      const inCooldown = unblockTime && Date.now() < unblockTime;
-      const cooldownRemaining = inCooldown ? Math.ceil((unblockTime - Date.now()) / 1000) : 0;
-
-      const totalRequests = stats.success + stats.failures;
-      const successRate = totalRequests > 0 ? ((stats.success / totalRequests) * 100).toFixed(1) : 'N/A';
-
-      return {
-        index: index + 1,
-        masked: proxy.masked,
-        active: this.currentIndex === index,
-        blocked: inCooldown,
-        cooldownSec: cooldownRemaining,
-        stats: {
-          success: stats.success,
-          failures: stats.failures,
-          blocks: stats.blocks,
-          successRate: successRate
-        }
-      };
-    });
-  }
-
-  /**
-   * Helper for Playwright format
-   */
-  getPlaywrightProxy() {
-    const proxy = this.getCurrentProxy();
-    if (!proxy) return undefined;
-
-    return {
-      server: proxy.server,
-      username: proxy.username,
-      password: proxy.password
-    };
-  }
-
-  /**
-   * Get proxy config for HTTP-level fetch (networkRouter)
-   * Used by https-proxy-agent and http-proxy-agent
-   */
   getHttpProxyConfig() {
     const proxy = this.getCurrentProxy();
     if (!proxy) return null;
-
     try {
       const url = new URL(proxy.url);
       return {
         host: url.hostname,
         port: url.port || (url.protocol === 'https:' ? '443' : '80'),
-        auth: proxy.username && proxy.password
-          ? `${proxy.username}:${proxy.password}`
-          : undefined,
+        auth: proxy.username && proxy.password ? `${proxy.username}:${proxy.password}` : undefined,
         protocol: url.protocol
       };
-    } catch (e) {
-      console.error('[ProxyManager] Failed to parse proxy URL:', e.message);
-      return null;
-    }
+    } catch (e) { return null; }
   }
 }
 
-// Singleton instance
 export const proxyManager = new ProxyManager();

@@ -1,4 +1,4 @@
-import { createTaskPage, removeUIObstacles, injectRegionalCookies } from './browser.js';
+import { createTaskPage, injectRegionalCookies } from './browser.js';
 import { getTimeConfig } from '../utils/timeUtils.js';
 
 const { GOTO_TIMEOUT } = getTimeConfig();

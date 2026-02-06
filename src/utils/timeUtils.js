@@ -9,12 +9,20 @@ export const randomDelay = (min, max) => Math.floor(Math.random() * (max - min +
 /**
  * Calculates a delay with a percentage-based jitter.
  * @param {number} base - The base delay in milliseconds.
- * @param {number} percent - The jitter percentage (e.g., 0.15 for +/- 15%).
+ * @param {number} percent - The jitter percentage (Default 0.40 for +/- 40%).
  * @returns {number} The calculated delay with jitter.
  */
-export const getJitteredDelay = (base, percent = 0.15) => {
+export const getJitteredDelay = (base, percent = 0.40) => {
   const jitter = Math.floor(base * percent);
   return Math.max(0, base + randomDelay(-jitter, jitter));
+};
+
+/**
+ * Returns a dynamic wait time designed to mimic human processing speed.
+ * @param {number} base - Base meaningful delay (e.g. 1000ms)
+ */
+export const getDynamicWait = (base = 1000) => {
+  return getJitteredDelay(base, 0.45);
 };
 
 /**
