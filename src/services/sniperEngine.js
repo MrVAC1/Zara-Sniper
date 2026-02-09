@@ -1,4 +1,4 @@
-import { getBrowser, initBrowser, createTaskPage, removeUIObstacles, closeAlerts, takeScreenshot, injectRegionalCookies } from './browser.js';
+import { getBrowser, initBrowser, createTaskPage, removeUIObstacles, closeAlerts, takeScreenshot, injectRegionalCookies, handleStoreRedirect } from './browser.js';
 import SniperTask from '../models/SniperTask.js';
 import User from '../models/User.js';
 import { checkAuthSession, handleCaptcha } from './errorHandler.js';
@@ -564,7 +564,7 @@ async function performAutoLogin(email, password, telegramBot) {
     const emailInput = await page.waitForSelector('[data-qa-input-qualifier="logonId"]', { visible: true, timeout: 15000 }).catch(() => null);
     if (!emailInput) throw new Error('Email input not found');
 
-    await emailInput.type(email, { delay: 80 });
+    await emailInput.type(email, { delay: randomDelay(50, 150) });
     await delay(randomDelay(500, 1000));
     await page.click('[data-qa-id="logon-form-submit"]');
     await delay(3000);
@@ -573,7 +573,7 @@ async function performAutoLogin(email, password, telegramBot) {
     const passwordInput = await page.waitForSelector('[data-qa-input-qualifier="password"]', { visible: true, timeout: 15000 }).catch(() => null);
     if (!passwordInput) throw new Error('Password input not found');
 
-    await passwordInput.type(password, { delay: 80 });
+    await passwordInput.type(password, { delay: randomDelay(50, 150) });
     await delay(randomDelay(500, 1000));
     await page.click('[data-qa-id="logon-form-submit"]');
 
@@ -677,14 +677,17 @@ async function handleSessionLoss(telegramBot, affectedTaskCount) {
     if (telegramBot) {
       const currentBotId = getBotId();
       const ownerId = process.env.OWNER_ID.split(',')[0].trim();
-      await telegramBot.sendMessage(
-        ownerId,
-        `🚨 *SESSION LOST DURING HUNTING*\n\n` +
-        `Active tasks: ${affectedTaskCount}\n` +
-        `Bot ID: ${currentBotId}\n` +
-        `Attempting automatic recovery...`,
-        { parse_mode: 'Markdown' }
-      ).catch(() => { });
+      const sender = telegramBot.telegram ? telegramBot.telegram : telegramBot;
+      if (typeof sender.sendMessage === 'function') {
+        await sender.sendMessage(
+          ownerId,
+          `🚨 *SESSION LOST DURING HUNTING*\n\n` +
+          `Active tasks: ${affectedTaskCount}\n` +
+          `Bot ID: ${currentBotId}\n` +
+          `Attempting automatic recovery...`,
+          { parse_mode: 'Markdown' }
+        ).catch(() => { });
+      }
     }
 
     // 2. Try to recover session from persistent browser context
@@ -707,11 +710,14 @@ async function handleSessionLoss(telegramBot, affectedTaskCount) {
 
         if (telegramBot) {
           const ownerId = process.env.OWNER_ID.split(',')[0].trim();
-          await telegramBot.sendMessage(
-            ownerId,
-            `✅ *SESSION RECOVERED*\n\nAll tasks can continue normally.`,
-            { parse_mode: 'Markdown' }
-          ).catch(() => { });
+          const sender = telegramBot.telegram ? telegramBot.telegram : telegramBot;
+          if (typeof sender.sendMessage === 'function') {
+            await sender.sendMessage(
+              ownerId,
+              `✅ *SESSION RECOVERED*\n\nAll tasks can continue normally.`,
+              { parse_mode: 'Markdown' }
+            ).catch(() => { });
+          }
         }
       } else {
         throw new Error('Session recovery failed - cookies still missing');
@@ -727,13 +733,16 @@ async function handleSessionLoss(telegramBot, affectedTaskCount) {
 
     if (telegramBot) {
       const ownerId = process.env.OWNER_ID.split(',')[0].trim();
-      await telegramBot.sendMessage(
-        ownerId,
-        `❌ *SESSION RECOVERY FAILED*\n\n` +
-        `Error: ${recoveryErr.message}\n\n` +
-        `Please run: \`npm run login\` to restore session manually.`,
-        { parse_mode: 'Markdown' }
-      ).catch(() => { });
+      const sender = telegramBot.telegram ? telegramBot.telegram : telegramBot;
+      if (typeof sender.sendMessage === 'function') {
+        await sender.sendMessage(
+          ownerId,
+          `❌ *SESSION RECOVERY FAILED*\n\n` +
+          `Error: ${recoveryErr.message}\n\n` +
+          `Please run: \`npm run login\` to restore session manually.`,
+          { parse_mode: 'Markdown' }
+        ).catch(() => { });
+      }
     }
   }
 }
@@ -1464,6 +1473,19 @@ export async function proceedToCheckout(page, telegramBot, taskId, userId, produ
         logger.error('[Checkout] Aborting checkout loop: Page is closed.');
         break;
       }
+
+      // --- STOP/PAUSE CHECK ---
+      if (isSystemPaused()) {
+        logger.warn('[Checkout] System Pause detected. Aborting checkout loop.');
+        throw new Error('System Paused');
+      }
+
+      const taskCheck = await SniperTask.findById(taskId);
+      if (!taskCheck || taskCheck.status === 'stopped' || taskCheck.status === 'paused') {
+        logger.warn('[Checkout] Task manually stopped/paused. Aborting.');
+        throw new Error('Task Stopped');
+      }
+      // -------------------------
 
       attempts++;
       let actionTaken = false;

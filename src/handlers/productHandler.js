@@ -31,7 +31,7 @@ export async function handleProductUrl(ctx, url) {
     }
 
     // Переконаємось, що браузер ініціалізовано
-    const context = getContext();
+    const context = await getContext();
     if (!context) {
       throw new Error("Браузер не ініціалізовано. Будь ласка, запустіть бота заново або зачекайте ініціалізації.");
     }
